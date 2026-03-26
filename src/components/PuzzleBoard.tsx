@@ -29,8 +29,22 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
   const [scores, setScores] = useState<{username: string, score: number}[]>([]);
   const [activeUsers, setActiveUsers] = useState<Set<string>>(new Set());
   const [showLeaderboard, setShowLeaderboard] = useState(false);
+  const [showColorPicker, setShowColorPicker] = useState(false);
   const [bgColor, setBgColor] = useState('#1e293b'); // default slate-800
   const [maxPlayers, setMaxPlayers] = useState(8);
+
+  const PRESET_COLORS = [
+    '#0f172a', // slate-900
+    '#1e293b', // slate-800
+    '#171717', // neutral-900
+    '#1c1917', // stone-900
+    '#020617', // slate-950
+    '#3b0764', // purple-900
+    '#064e3b', // emerald-900
+    '#7f1d1d', // red-900
+    '#1e3a8a', // blue-900
+    '#ffffff', // white
+  ];
 
   // 로컬 타이머 보간을 위한 Ref
   const accumulatedTimeRef = useRef(0);
@@ -825,6 +839,93 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
           }
         };
 
+        const zoomToCompletedPuzzle = (animate = true) => {
+          const maxDim = Math.max(boardWidth, boardHeight);
+          const boundingBoxSize = maxDim * 1.1; // 좀 더 타이트하게 줌인
+          const targetScale = Math.min(app.screen.width / boundingBoxSize, app.screen.height / boundingBoxSize, 5);
+          const targetX = (app.screen.width - boardWidth * targetScale) / 2;
+          const targetY = (app.screen.height - boardHeight * targetScale) / 2;
+
+          if (!animate) {
+            world.scale.set(targetScale);
+            world.x = targetX;
+            world.y = targetY;
+            return;
+          }
+
+          const startScale = world.scale.x;
+          const startX = world.x;
+          const startY = world.y;
+          
+          let progress = 0;
+          const animateZoom = () => {
+            progress += 0.02;
+            if (progress >= 1) {
+              world.scale.set(targetScale);
+              world.x = targetX;
+              world.y = targetY;
+              app.ticker.remove(animateZoom);
+              return;
+            }
+            const ease = progress < 0.5 ? 2 * progress * progress : -1 + (4 - 2 * progress) * progress;
+            world.scale.set(startScale + (targetScale - startScale) * ease);
+            world.x = startX + (targetX - startX) * ease;
+            world.y = startY + (targetY - startY) * ease;
+          };
+          app.ticker.add(animateZoom);
+        };
+
+        const playShineEffect = () => {
+          const shineContainer = new PIXI.Container();
+          shineContainer.zIndex = 1000;
+          
+          const thickShine = new PIXI.Graphics();
+          thickShine.rect(0, -boardHeight * 2, boardWidth * 0.15, boardHeight * 4);
+          thickShine.fill({ color: 0xffffff, alpha: 0.3 });
+          thickShine.blendMode = 'add';
+          
+          const thinShine = new PIXI.Graphics();
+          thinShine.rect(boardWidth * 0.18, -boardHeight * 2, boardWidth * 0.03, boardHeight * 4);
+          thinShine.fill({ color: 0xffffff, alpha: 0.4 });
+          thinShine.blendMode = 'add';
+          
+          shineContainer.addChild(thickShine);
+          shineContainer.addChild(thinShine);
+          shineContainer.rotation = Math.PI / 6; // 30도 회전
+          
+          const mask = new PIXI.Graphics();
+          mask.rect(0, 0, boardWidth, boardHeight);
+          mask.fill(0xffffff);
+          
+          shineContainer.mask = mask;
+          
+          world.addChild(mask);
+          world.addChild(shineContainer);
+          
+          const startX = -boardHeight;
+          const endX = boardWidth + boardHeight;
+          shineContainer.x = startX;
+          shineContainer.y = 0;
+          
+          let progress = 0;
+          const animateShine = () => {
+            progress += 0.015; // 애니메이션 속도
+            shineContainer.x = startX + (endX - startX) * progress;
+            if (progress >= 1) {
+              app.ticker.remove(animateShine);
+              world.removeChild(shineContainer);
+              world.removeChild(mask);
+              shineContainer.destroy({ children: true });
+              mask.destroy();
+            }
+          };
+          
+          // 약간의 딜레이 후 실행 (줌인 애니메이션과 어우러지도록)
+          setTimeout(() => {
+            app.ticker.add(animateShine);
+          }, 500);
+        };
+
         const checkCompletion = async () => {
           let lockedCount = 0;
           for (let i = 0; i < PIECE_COUNT; i++) {
@@ -841,6 +942,8 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
               socketRef.current.emit("puzzle_completed", roomId);
             }
             triggerFireworks();
+            zoomToCompletedPuzzle(true);
+            playShineEffect();
           }
         };
 
@@ -1307,6 +1410,12 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
         }
         setPlacedPieces(initialPlacedCount);
 
+        if (initialPlacedCount === PIECE_COUNT) {
+          zoomToCompletedPuzzle(false);
+          triggerFireworks();
+          playShineEffect();
+        }
+
         // 3. Supabase Realtime 수신
         const channel = supabase.channel(`room_${roomId}`);
         channelRef.current = channel;
@@ -1515,15 +1624,52 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
             <span className="text-xs sm:text-sm font-medium font-mono whitespace-nowrap">{formatTime(playTime)}</span>
           </div>
 
-          <div className="flex items-center gap-1 sm:gap-2 bg-slate-800/50 px-2 sm:px-3 py-1.5 rounded-lg border border-slate-700/50 shrink-0">
-            <Palette size={14} className="text-slate-400 sm:w-4 sm:h-4" />
-            <input 
-              type="color" 
-              value={bgColor} 
-              onChange={(e) => setBgColor(e.target.value)}
-              className="w-5 h-5 sm:w-6 sm:h-6 p-0 border-0 rounded cursor-pointer bg-transparent"
+          <div className="relative">
+            <button 
+              onClick={() => setShowColorPicker(!showColorPicker)}
+              className={`flex items-center gap-1 sm:gap-2 px-2 sm:px-3 py-1.5 rounded-lg border transition-colors shrink-0 ${showColorPicker ? 'bg-blue-500/20 border-blue-500/50 text-blue-400' : 'bg-slate-800/50 border-slate-700/50 text-slate-400 hover:bg-slate-700'}`}
               title="Change Background Color"
-            />
+            >
+              <Palette size={14} className="sm:w-4 sm:h-4" />
+              <div className="w-4 h-4 rounded-full border border-slate-600 shadow-sm" style={{ backgroundColor: bgColor }} />
+            </button>
+            
+            {showColorPicker && (
+              <div className="absolute top-full mt-2 right-0 bg-slate-800 border border-slate-700 rounded-xl shadow-2xl p-3 z-50 animate-in fade-in slide-in-from-top-2 w-[140px]">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-medium text-slate-300">Background</span>
+                  <button onClick={() => setShowColorPicker(false)} className="text-slate-500 hover:text-white">
+                    <X size={14} />
+                  </button>
+                </div>
+                <div className="grid grid-cols-5 gap-2">
+                  {PRESET_COLORS.map(color => (
+                    <button
+                      key={color}
+                      onClick={() => {
+                        setBgColor(color);
+                        setShowColorPicker(false);
+                      }}
+                      className={`w-5 h-5 rounded-full border-2 transition-transform hover:scale-110 ${bgColor === color ? 'border-blue-400 scale-110' : 'border-slate-600'}`}
+                      style={{ backgroundColor: color }}
+                      title={color}
+                    />
+                  ))}
+                </div>
+                <div className="mt-3 pt-3 border-t border-slate-700 flex items-center justify-between">
+                  <span className="text-xs text-slate-400">Custom</span>
+                  <div className="relative w-6 h-6 rounded overflow-hidden border border-slate-600">
+                    <input 
+                      type="color" 
+                      value={bgColor} 
+                      onChange={(e) => setBgColor(e.target.value)}
+                      className="absolute -top-2 -left-2 w-10 h-10 cursor-pointer"
+                      title="Custom Color"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           <button 
