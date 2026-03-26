@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import * as PIXI from 'pixi.js';
 import { createClient } from '@supabase/supabase-js';
 import { throttle } from 'lodash';
-import { Clock, Users, Trophy, ChevronLeft, X } from 'lucide-react';
+import { Clock, Users, Trophy, ChevronLeft, X, Palette } from 'lucide-react';
 import { io, Socket } from 'socket.io-client';
 import confetti from 'canvas-confetti';
 
@@ -29,6 +29,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
   const [scores, setScores] = useState<{username: string, score: number}[]>([]);
   const [activeUsers, setActiveUsers] = useState<Set<string>>(new Set());
   const [showLeaderboard, setShowLeaderboard] = useState(false);
+  const [bgColor, setBgColor] = useState('#1e293b'); // default slate-800
   const [maxPlayers, setMaxPlayers] = useState(8);
 
   // 로컬 타이머 보간을 위한 Ref
@@ -1466,7 +1467,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
   }, [imageUrl]);
 
   return (
-    <div className="w-full h-full relative">
+    <div className="w-full h-full relative" style={{ backgroundColor: bgColor }}>
       <div className="absolute top-0 left-0 w-full z-50 bg-slate-900/80 backdrop-blur-sm border-b border-slate-700/50 p-2 sm:p-4 flex flex-col sm:flex-row items-center justify-between gap-2 sm:gap-4 text-white shadow-lg">
         {/* Top Row (Mobile) / Left Side (Desktop) */}
         <div className="flex items-center justify-between w-full sm:w-auto gap-2">
@@ -1514,6 +1515,17 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
             <span className="text-xs sm:text-sm font-medium font-mono whitespace-nowrap">{formatTime(playTime)}</span>
           </div>
 
+          <div className="flex items-center gap-1 sm:gap-2 bg-slate-800/50 px-2 sm:px-3 py-1.5 rounded-lg border border-slate-700/50 shrink-0">
+            <Palette size={14} className="text-slate-400 sm:w-4 sm:h-4" />
+            <input 
+              type="color" 
+              value={bgColor} 
+              onChange={(e) => setBgColor(e.target.value)}
+              className="w-5 h-5 sm:w-6 sm:h-6 p-0 border-0 rounded cursor-pointer bg-transparent"
+              title="Change Background Color"
+            />
+          </div>
+
           <button 
             onClick={() => setShowLeaderboard(!showLeaderboard)}
             className={`hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-lg transition-colors border shrink-0 ${showLeaderboard ? 'bg-amber-500/20 border-amber-500/50 text-amber-400' : 'bg-slate-800 hover:bg-slate-700 border-slate-600'}`}
@@ -1540,20 +1552,25 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
               <div className="text-center text-slate-400 py-4 text-sm">No scores yet</div>
             ) : (
               <div className="space-y-1">
-                {scores.map((score, idx) => (
-                  <div key={idx} className="flex items-center justify-between p-2 rounded-lg hover:bg-slate-700/50 transition-colors">
+                {scores.map((score, idx) => {
+                  const isMe = score.username === (localStorage.getItem('puzzle_username') || 'Anonymous');
+                  return (
+                  <div key={idx} className={`flex items-center justify-between p-2 rounded-lg transition-colors ${isMe ? 'bg-blue-500/20 border border-blue-500/30' : 'hover:bg-slate-700/50'}`}>
                     <div className="flex items-center gap-3">
                       <span className={`font-bold w-4 text-center ${idx === 0 ? 'text-amber-400' : idx === 1 ? 'text-slate-300' : idx === 2 ? 'text-amber-700' : 'text-slate-500'}`}>
                         {idx + 1}
                       </span>
                       <div className="flex items-center gap-1.5">
                         <div className={`w-2 h-2 rounded-full ${activeUsers.has(score.username) ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-slate-600'}`} title={activeUsers.has(score.username) ? 'Online' : 'Offline'} />
-                        <span className={`text-sm truncate max-w-[90px] ${activeUsers.has(score.username) ? 'text-slate-200' : 'text-slate-400'}`} title={score.username}>{score.username}</span>
+                        <span className={`text-sm truncate max-w-[100px] ${isMe ? 'text-blue-300 font-bold' : activeUsers.has(score.username) ? 'text-slate-200' : 'text-slate-400'}`} title={score.username}>
+                          {score.username}
+                        </span>
+                        {isMe && <span className="text-[10px] font-bold text-blue-400 bg-blue-500/20 px-1.5 py-0.5 rounded-full ml-1">YOU</span>}
                       </div>
                     </div>
                     <span className="font-bold text-blue-400">{score.score}</span>
                   </div>
-                ))}
+                )})}
               </div>
             )}
           </div>
