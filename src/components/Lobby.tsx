@@ -13,12 +13,11 @@ const getBrowserTag = () => {
 };
 
 const formatPlayTime = (seconds: number) => {
-  if (!seconds) return '0m 0s';
+  if (!seconds) return '00:00:00';
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
-  const s = seconds % 60;
-  if (h > 0) return `${h}h ${m}m ${s}s`;
-  return `${m}m ${s}s`;
+  const s = Math.floor(seconds % 60);
+  return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
 };
 
 const Lobby = ({ onJoinRoom }: { onJoinRoom: (roomId: number, imageUrl: string, pieceCount: number) => void }) => {
@@ -65,12 +64,27 @@ const Lobby = ({ onJoinRoom }: { onJoinRoom: (roomId: number, imageUrl: string, 
           
         room.totalPieces = total || room.piece_count;
         room.snappedCount = locked || 0;
+        
+        if (total === locked && total > 0 && room.status === 'active') {
+          const { error } = await supabase
+            .from('pixi_rooms')
+            .update({ status: 'completed' })
+            .eq('id', room.id);
+          if (error) {
+            console.error("Failed to auto-complete room:", error);
+          } else {
+            room.status = 'completed';
+          }
+        }
       }));
     }
 
-    if (active) {
+    const finalActive = active ? active.filter(r => r.status === 'active') : [];
+    const newlyCompleted = active ? active.filter(r => r.status === 'completed') : [];
+
+    if (finalActive.length > 0 || active?.length === 0) {
       setActiveRooms(prev => {
-        return active.map(newRoom => {
+        return finalActive.map(newRoom => {
           const existingRoom = prev.find(r => r.id === newRoom.id);
           if (existingRoom && existingRoom.currentPlayers !== undefined) {
             newRoom.currentPlayers = existingRoom.currentPlayers;
@@ -81,7 +95,13 @@ const Lobby = ({ onJoinRoom }: { onJoinRoom: (roomId: number, imageUrl: string, 
         });
       });
     }
-    if (completed) setCompletedRooms(completed);
+    
+    if (completed || newlyCompleted.length > 0) {
+      const allCompleted = [...(newlyCompleted || []), ...(completed || [])];
+      // remove duplicates
+      const uniqueCompleted = Array.from(new Map(allCompleted.map(item => [item.id, item])).values());
+      setCompletedRooms(uniqueCompleted);
+    }
   };
 
   useEffect(() => {
@@ -396,7 +416,7 @@ const Lobby = ({ onJoinRoom }: { onJoinRoom: (roomId: number, imageUrl: string, 
                         <Clock className="w-3 h-3 mr-1" />
                         {new Date(room.created_at).toLocaleDateString()}
                         <span className="text-indigo-400 font-medium ml-1">
-                          • Playtime: {formatPlayTime(room.total_play_time_seconds || 0)}
+                          • {formatPlayTime(room.total_play_time_seconds || 0)}
                         </span>
                       </p>
                     </div>
@@ -474,7 +494,7 @@ const Lobby = ({ onJoinRoom }: { onJoinRoom: (roomId: number, imageUrl: string, 
                           <Clock className="w-3 h-3 mr-1" />
                           {new Date(room.created_at).toLocaleDateString()}
                           <span className="text-amber-400 font-medium ml-1">
-                            • Playtime: {formatPlayTime(room.total_play_time_seconds || 0)}
+                            • {formatPlayTime(room.total_play_time_seconds || 0)}
                           </span>
                         </p>
                       </div>

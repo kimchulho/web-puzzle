@@ -27,6 +27,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
   const initialPositionsRef = useRef<{x: number, y: number}[]>([]);
   const isBotRunningRef = useRef(false);
   const isColorBotRunningRef = useRef(false);
+  const isCompletedRef = useRef(false);
   const worldRef = useRef<PIXI.Container | null>(null);
   const miniPadDragRef = useRef<{ x: number, y: number, isDragging: boolean, moved: boolean } | null>(null);
   const zoomPadDragRef = useRef<{ x: number, isDragging: boolean } | null>(null);
@@ -101,12 +102,12 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
         await document.documentElement.requestFullscreen();
       }
       
-      if (window.screen && window.screen.orientation && window.screen.orientation.lock) {
+      if (window.screen && window.screen.orientation && (window.screen.orientation as any).lock) {
         const currentType = window.screen.orientation.type;
         if (currentType.startsWith('portrait')) {
-          await window.screen.orientation.lock('landscape');
+          await (window.screen.orientation as any).lock('landscape');
         } else {
-          await window.screen.orientation.lock('portrait');
+          await (window.screen.orientation as any).lock('portrait');
         }
       } else {
         console.warn("Screen orientation lock is not supported on this device/browser.");
@@ -261,8 +262,13 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
             selectedMoved = false;
             selectedTouchStartPos = { x: e.global.x, y: e.global.y };
             const localPos = e.getLocalPosition(world);
+            
+            // Bring selected cluster to top immediately on touch down
+            topZIndex++;
+            
             selectedCluster.forEach(id => {
               const p = pieces.current.get(id)!;
+              p.zIndex = topZIndex;
               selectedOffsets.set(id, { x: localPos.x - p.x, y: localPos.y - p.y });
               targetPositions.delete(id);
             });
@@ -332,7 +338,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
                 const currentLocalPos = e.getLocalPosition(world);
                 selectedCluster.forEach(id => {
                   const p = pieces.current.get(id)!;
-                  p.zIndex = topZIndex;
+                  p.zIndex = 999999;
                   // Update offset so the piece starts moving smoothly from its current position without jumping
                   selectedOffsets.set(id, { x: currentLocalPos.x - p.x, y: currentLocalPos.y - p.y });
                 });
@@ -382,7 +388,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
                 const updates: any[] = [];
                 dragCluster.forEach(id => {
                   const p = pieces.current.get(id)!;
-                  p.zIndex = topZIndex;
+                  p.zIndex = 999999;
                   p.y -= currentShiftY;
                   updates.push({ pieceId: id, x: p.x, y: p.y });
                 });
@@ -437,10 +443,12 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
             if (!isTouchDraggingPiece) {
               // Tap to select
               selectedCluster = dragCluster;
+              topZIndex++;
               selectedCluster.forEach(id => {
                 const p = pieces.current.get(id)!;
                 const highlight = p.getChildByName('highlight');
                 if (highlight) highlight.visible = true;
+                p.zIndex = topZIndex;
               });
               
               sendLockBatch(Array.from(selectedCluster));
@@ -449,6 +457,13 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
             
             isTouchDraggingPiece = false;
             sendUnlockBatch(Array.from(dragCluster));
+            
+            topZIndex++;
+            dragCluster.forEach(id => {
+              const p = pieces.current.get(id)!;
+              p.zIndex = topZIndex;
+            });
+
             const snapped = snapCluster(dragCluster);
             if (snapped && selectedCluster && dragCluster.has(Array.from(selectedCluster)[0])) {
               selectedCluster.forEach(id => {
@@ -464,6 +479,15 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
 
           if (isDraggingSelected) {
             isDraggingSelected = false;
+            
+            if (selectedCluster) {
+              topZIndex++;
+              selectedCluster.forEach(id => {
+                const p = pieces.current.get(id)!;
+                p.zIndex = topZIndex;
+              });
+            }
+
             if (!selectedMoved) {
               // It was just a tap -> deselect
               if (selectedCluster) {
@@ -1049,17 +1073,40 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
         };
 
         const checkCompletion = async () => {
+          if (isCompletedRef.current) return;
+          
           let lockedCount = 0;
           for (let i = 0; i < PIECE_COUNT; i++) {
             const p = pieces.current.get(i);
-            if (p && p.eventMode === 'none') {
-              lockedCount++;
+            if (p) {
+              const col = i % GRID_COLS;
+              const row = Math.floor(i / GRID_COLS);
+              const targetX = boardStartX + col * pieceWidth;
+              const targetY = boardStartY + row * pieceHeight;
+              if (Math.abs(p.x - targetX) < 1 && Math.abs(p.y - targetY) < 1) {
+                lockedCount++;
+              }
             }
           }
           setPlacedPieces(lockedCount);
           
           if (lockedCount === PIECE_COUNT) {
-            await supabase.from('pixi_rooms').update({ status: 'completed' }).eq('id', roomId);
+            isCompletedRef.current = true;
+            
+            // Lock all pieces visually
+            for (let i = 0; i < PIECE_COUNT; i++) {
+              const p = pieces.current.get(i);
+              if (p) {
+                p.eventMode = 'none';
+                p.zIndex = 0;
+                p.alpha = 1;
+              }
+            }
+
+            const { error } = await supabase.from('pixi_rooms').update({ status: 'completed' }).eq('id', roomId);
+            if (error) {
+              console.error("Failed to update room status to completed:", error);
+            }
             if (socketRef.current) {
               socketRef.current.emit("puzzle_completed", roomId);
             }
@@ -1202,19 +1249,34 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
 
           // 2. Check board snapping if not snapped to a piece
           if (!snapped) {
-            for (const id of cluster) {
-              const c1 = id % GRID_COLS;
-              const r1 = Math.floor(id / GRID_COLS);
-              const p1 = pieces.current.get(id)!;
+            // If the cluster contains all pieces, automatically snap it to the board
+            if (cluster.size === PIECE_COUNT) {
+              const firstId = Array.from(cluster)[0];
+              const c1 = firstId % GRID_COLS;
+              const r1 = Math.floor(firstId / GRID_COLS);
+              const p1 = pieces.current.get(firstId)!;
               
               const targetX = boardStartX + c1 * pieceWidth;
               const targetY = boardStartY + r1 * pieceHeight;
               
-              if (Math.abs(p1.x - targetX) < SNAP_THRESHOLD && Math.abs(p1.y - targetY) < SNAP_THRESHOLD) {
-                offsetX = targetX - p1.x;
-                offsetY = targetY - p1.y;
-                snapped = true;
-                break;
+              offsetX = targetX - p1.x;
+              offsetY = targetY - p1.y;
+              snapped = true;
+            } else {
+              for (const id of cluster) {
+                const c1 = id % GRID_COLS;
+                const r1 = Math.floor(id / GRID_COLS);
+                const p1 = pieces.current.get(id)!;
+                
+                const targetX = boardStartX + c1 * pieceWidth;
+                const targetY = boardStartY + r1 * pieceHeight;
+                
+                if (Math.abs(p1.x - targetX) < SNAP_THRESHOLD && Math.abs(p1.y - targetY) < SNAP_THRESHOLD) {
+                  offsetX = targetX - p1.x;
+                  offsetY = targetY - p1.y;
+                  snapped = true;
+                  break;
+                }
               }
             }
           }
@@ -1772,7 +1834,8 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
               if (p && p.eventMode !== 'none') {
                 p.x = target.x;
                 p.y = target.y;
-                p.zIndex = 1000;
+                topZIndex++;
+                p.zIndex = topZIndex;
                 updates.push({ pieceId: id, x: target.x, y: target.y });
                 dbUpdates.push({ piece_index: id, x: target.x, y: target.y, is_locked: false });
               }
@@ -1905,7 +1968,8 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
             await moveCursorTo(p.x, p.y, Math.max(200, distToPiece * 0.5));
             if (!isColorBotRunningRef.current) break;
 
-            p.zIndex = 1000;
+            topZIndex++;
+            p.zIndex = topZIndex;
             
             const distToTarget = Math.hypot(target.x - p.x, target.y - p.y);
             const startX = cursorData!.container.x;
@@ -2512,6 +2576,14 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
             if (selectedCluster) {
               // 선택된 조각이 있을 때는 무조건 배경(stage)으로 이벤트를 넘겨서
               // 아무 곳이나 드래그/터치 시 선택된 조각이 제어되도록 함
+              
+              // Bring selected cluster to top immediately on touch down
+              topZIndex++;
+              selectedCluster.forEach(id => {
+                const p = pieces.current.get(id)!;
+                p.zIndex = topZIndex;
+              });
+              
               return;
             }
             
@@ -2538,11 +2610,19 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
               const updates: any[] = [];
               dragCluster.forEach(id => {
                 const p = pieces.current.get(id)!;
-                p.zIndex = topZIndex;
+                p.zIndex = 999999;
                 updates.push({ pieceId: id, x: p.x, y: p.y });
               });
               sendLockBatch(Array.from(dragCluster));
               sendMoveBatch(updates);
+            } else {
+              // On touch, we don't start dragging immediately, but we should bring the piece to the top
+              // so it's visible if it's selected.
+              topZIndex++;
+              dragCluster.forEach(id => {
+                const p = pieces.current.get(id)!;
+                p.zIndex = topZIndex;
+              });
             }
           });
 
@@ -2552,9 +2632,19 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
         setPlacedPieces(initialPlacedCount);
 
         if (initialPlacedCount === PIECE_COUNT) {
+          isCompletedRef.current = true;
           zoomToCompletedPuzzle(false);
           triggerFireworks();
           playShineEffect();
+          if (socketRef.current) {
+            socketRef.current.emit("puzzle_completed", roomId);
+          }
+          supabase.from('pixi_rooms').update({ status: 'completed' }).eq('id', roomId).then(({error}) => {
+            if (error) console.error("Failed to update room status:", error);
+          });
+        } else {
+          // Even if not all are marked as locked in DB, check if their positions are correct
+          checkCompletion();
         }
 
         // 3. Supabase Realtime 수신
@@ -2585,7 +2675,8 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
                   pieceContainer.alpha = 1; // 잠금 해제 및 원래 투명도 복구
                 } else {
                   // 다른 사용자가 드래그 중인 조각도 위로 올리기
-                  pieceContainer.zIndex = 1000;
+                  topZIndex++;
+                  pieceContainer.zIndex = topZIndex;
                 }
               }
             });
