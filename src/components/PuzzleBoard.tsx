@@ -29,6 +29,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
   const isColorBotRunningRef = useRef(false);
   const worldRef = useRef<PIXI.Container | null>(null);
   const miniPadDragRef = useRef<{ x: number, y: number, isDragging: boolean, moved: boolean } | null>(null);
+  const zoomPadDragRef = useRef<{ x: number, isDragging: boolean } | null>(null);
 
   const [placedPieces, setPlacedPieces] = useState(0);
   const [totalPieces, setTotalPieces] = useState(pieceCount);
@@ -2724,6 +2725,45 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
     e.currentTarget.setPointerCapture(e.pointerId);
   };
 
+  const handleZoomPadPointerDown = (e: React.PointerEvent) => {
+    zoomPadDragRef.current = { x: e.clientX, isDragging: true };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+
+  const handleZoomPadPointerMove = (e: React.PointerEvent) => {
+    if (!zoomPadDragRef.current?.isDragging || !worldRef.current) return;
+    
+    const dx = e.clientX - zoomPadDragRef.current.x;
+    if (Math.abs(dx) > 0) {
+      // Sensitivity: 1 pixel = 1% zoom change
+      const zoomFactor = 1 + (dx * 0.01);
+      
+      const canvas = document.querySelector('canvas');
+      if (!canvas) return;
+      
+      const rect = canvas.getBoundingClientRect();
+      const centerX = rect.width / 2;
+      const centerY = rect.height / 2;
+      
+      const world = worldRef.current;
+      const worldX = (centerX - world.x) / world.scale.x;
+      const worldY = (centerY - world.y) / world.scale.y;
+      
+      const newScale = Math.max(0.1, Math.min(world.scale.x * zoomFactor, 5));
+      world.scale.set(newScale);
+      
+      world.x = centerX - worldX * world.scale.x;
+      world.y = centerY - worldY * world.scale.y;
+      
+      zoomPadDragRef.current.x = e.clientX;
+    }
+  };
+
+  const handleZoomPadPointerUp = (e: React.PointerEvent) => {
+    zoomPadDragRef.current = null;
+    e.currentTarget.releasePointerCapture(e.pointerId);
+  };
+
   const handleMiniPadPointerMove = (e: React.PointerEvent) => {
     if (!miniPadDragRef.current?.isDragging || !worldRef.current) return;
 
@@ -2944,10 +2984,10 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
 
           <button 
             onClick={toggleOrientation}
-            className="flex sm:hidden items-center justify-center w-8 h-8 bg-slate-800/50 hover:bg-slate-700 rounded-lg transition-colors border border-slate-700/50 text-slate-400 hover:text-white shrink-0"
+            className="flex lg:hidden items-center justify-center w-8 h-8 sm:w-9 sm:h-9 bg-slate-800/50 hover:bg-slate-700 rounded-lg transition-colors border border-slate-700/50 text-slate-400 hover:text-white shrink-0"
             title="Rotate Screen"
           >
-            <RotateCcw size={16} />
+            <RotateCcw size={18} />
           </button>
 
           <button 
@@ -3069,16 +3109,35 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
         </div>
       )}
 
-      {/* Mini Image Pad */}
-      <div
-        className="fixed bottom-4 left-4 sm:bottom-6 sm:left-6 z-40 rounded-xl border-2 border-slate-600/50 shadow-2xl overflow-hidden cursor-pointer touch-none bg-slate-800/80 backdrop-blur-md p-1.5 transition-transform hover:scale-105"
-        onPointerDown={handleMiniPadPointerDown}
-        onPointerMove={handleMiniPadPointerMove}
-        onPointerUp={handleMiniPadPointerUp}
-        onPointerCancel={handleMiniPadPointerUp}
-        title="Drag to pan, Click to view full image"
-      >
-        <img src={imageUrl} alt="Puzzle Thumbnail" className="w-24 sm:w-32 h-auto rounded-lg opacity-90 hover:opacity-100 transition-opacity pointer-events-none object-cover" />
+      {/* Mini Image Pad & Zoom Pad Container */}
+      <div className="fixed bottom-4 left-4 sm:bottom-6 sm:left-6 z-40 flex flex-col gap-2">
+        {/* Zoom Pad */}
+        <div 
+          className="w-24 sm:w-32 h-8 rounded-full border-2 border-slate-600/50 shadow-lg bg-slate-800/80 backdrop-blur-md flex items-center justify-center cursor-ew-resize touch-none"
+          onPointerDown={handleZoomPadPointerDown}
+          onPointerMove={handleZoomPadPointerMove}
+          onPointerUp={handleZoomPadPointerUp}
+          onPointerCancel={handleZoomPadPointerUp}
+          title="Drag left/right to zoom"
+        >
+          <div className="flex items-center justify-between w-full px-3 text-slate-400 pointer-events-none">
+            <span className="text-lg font-bold leading-none mb-0.5">-</span>
+            <div className="w-6 sm:w-10 h-1 bg-slate-600 rounded-full"></div>
+            <span className="text-lg font-bold leading-none mb-0.5">+</span>
+          </div>
+        </div>
+
+        {/* Mini Image Pad */}
+        <div
+          className="rounded-xl border-2 border-slate-600/50 shadow-2xl overflow-hidden cursor-pointer touch-none bg-slate-800/80 backdrop-blur-md p-1.5 transition-transform hover:scale-105"
+          onPointerDown={handleMiniPadPointerDown}
+          onPointerMove={handleMiniPadPointerMove}
+          onPointerUp={handleMiniPadPointerUp}
+          onPointerCancel={handleMiniPadPointerUp}
+          title="Drag to pan, Click to view full image"
+        >
+          <img src={imageUrl} alt="Puzzle Thumbnail" className="w-24 sm:w-32 h-auto rounded-lg opacity-90 hover:opacity-100 transition-opacity pointer-events-none object-cover" />
+        </div>
       </div>
 
       {/* Full Image Modal */}
