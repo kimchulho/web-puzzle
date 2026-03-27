@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import * as PIXI from 'pixi.js';
 import { createClient } from '@supabase/supabase-js';
 import { throttle } from 'lodash';
-import { Clock, Users, Trophy, ChevronLeft, X, Palette, LayoutGrid, Zap, Heart, Image as ImageIcon, Bot } from 'lucide-react';
+import { Clock, Users, Trophy, ChevronLeft, X, Palette, LayoutGrid, Zap, Heart, Image as ImageIcon, Bot, Maximize, Minimize } from 'lucide-react';
 import { io, Socket } from 'socket.io-client';
 import confetti from 'canvas-confetti';
 
@@ -42,6 +42,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
   const [showBotMenu, setShowBotMenu] = useState(false);
   const [showMosaicModal, setShowMosaicModal] = useState(false);
   const [showFullImage, setShowFullImage] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const [mosaicUrl, setMosaicUrl] = useState("https://ewbjogsolylcbfmpmyfa.supabase.co/storage/v1/object/public/checki/2.jpg");
   const [mosaicQuick, setMosaicQuick] = useState(false);
   const [mosaicGap, setMosaicGap] = useState(1.6);
@@ -72,6 +73,26 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
   useEffect(() => {
     activeUsersRef.current = activeUsers;
   }, [activeUsers]);
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+  }, []);
+
+  const toggleFullscreen = async () => {
+    try {
+      if (!document.fullscreenElement) {
+        await document.documentElement.requestFullscreen();
+      } else {
+        await document.exitFullscreen();
+      }
+    } catch (err) {
+      console.error("Error attempting to toggle fullscreen:", err);
+    }
+  };
 
   useEffect(() => {
     // Fetch room creation time and initial scores
@@ -286,9 +307,12 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
               if (Math.sqrt(dx * dx + dy * dy) > 10) {
                 selectedMoved = true;
                 topZIndex++;
+                const currentLocalPos = e.getLocalPosition(world);
                 selectedCluster.forEach(id => {
                   const p = pieces.current.get(id)!;
                   p.zIndex = topZIndex;
+                  // Update offset so the piece starts moving smoothly from its current position without jumping
+                  selectedOffsets.set(id, { x: currentLocalPos.x - p.x, y: currentLocalPos.y - p.y });
                 });
               } else {
                 return;
@@ -2715,10 +2739,10 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
         <div className="flex items-center justify-between w-full sm:w-auto gap-2">
           <button 
             onClick={onBack}
-            className="flex items-center gap-1 sm:gap-2 bg-slate-800 hover:bg-slate-700 px-2 sm:px-3 py-1.5 rounded-lg transition-colors border border-slate-600 shrink-0"
+            className="flex items-center justify-center bg-slate-800 hover:bg-slate-700 w-8 h-8 sm:w-10 sm:h-10 rounded-lg transition-colors border border-slate-600 shrink-0"
+            title="Back to Lobby"
           >
-            <ChevronLeft size={18} className="w-4 h-4 sm:w-5 sm:h-5" />
-            <span className="font-medium text-sm sm:text-base hidden sm:inline">Lobby</span>
+            <ChevronLeft size={20} className="w-5 h-5 sm:w-6 sm:h-6" />
           </button>
           
           <div className="flex items-center gap-2 bg-slate-800/50 px-2 sm:px-3 py-1.5 rounded-lg border border-slate-700/50 flex-1 sm:flex-none justify-center">
@@ -2760,11 +2784,10 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
           <div className="relative">
             <button
               onClick={() => setShowBotMenu(!showBotMenu)}
-              className={`flex items-center gap-1 sm:gap-2 px-2 sm:px-3 py-1.5 rounded-lg border transition-colors shrink-0 ${showBotMenu ? 'bg-indigo-500/20 border-indigo-500/50 text-indigo-400' : 'bg-slate-800/50 border-slate-700/50 text-slate-400 hover:bg-slate-700 hover:text-white'}`}
+              className={`flex items-center justify-center w-8 h-8 sm:w-10 sm:h-10 rounded-lg border transition-colors shrink-0 ${showBotMenu ? 'bg-indigo-500/20 border-indigo-500/50 text-indigo-400' : 'bg-slate-800/50 border-slate-700/50 text-slate-400 hover:bg-slate-700 hover:text-white'}`}
               title="Bot Actions"
             >
-              <Bot size={14} className={`sm:w-4 sm:h-4 ${isColorBotLoading ? 'animate-pulse text-indigo-400' : ''}`} />
-              <span className="hidden sm:inline text-sm font-medium">Bot</span>
+              <Bot size={20} className={`sm:w-5 sm:h-5 ${isColorBotLoading ? 'animate-pulse text-indigo-400' : ''}`} />
             </button>
             
             {showBotMenu && (
@@ -2896,6 +2919,14 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
           >
             <Trophy size={16} className={showLeaderboard ? 'text-amber-400' : 'text-slate-400'} />
             <span className="font-medium text-sm">Leaderboard</span>
+          </button>
+
+          <button 
+            onClick={toggleFullscreen}
+            className="flex items-center justify-center w-8 h-8 sm:w-10 sm:h-10 bg-slate-800/50 hover:bg-slate-700 rounded-lg transition-colors border border-slate-700/50 text-slate-400 hover:text-white shrink-0"
+            title={isFullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}
+          >
+            {isFullscreen ? <Minimize size={20} className="sm:w-5 sm:h-5" /> : <Maximize size={20} className="sm:w-5 sm:h-5" />}
           </button>
         </div>
       </div>
