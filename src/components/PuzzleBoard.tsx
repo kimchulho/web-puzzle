@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import * as PIXI from 'pixi.js';
 import { createClient } from '@supabase/supabase-js';
 import { throttle } from 'lodash';
-import { Clock, Users, Trophy, ChevronLeft, X, Palette } from 'lucide-react';
+import { Clock, Users, Trophy, ChevronLeft, X, Palette, LayoutGrid, Zap, Heart, Image as ImageIcon, Bot } from 'lucide-react';
 import { io, Socket } from 'socket.io-client';
 import confetti from 'canvas-confetti';
 
@@ -21,21 +21,35 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
   const channelRef = useRef<any>(null);
   const socketRef = useRef<Socket | null>(null);
   const textureAliasRef = useRef<string | null>(null);
+  const gatherBordersRef = useRef<(() => void) | null>(null);
+  const gatherByColorRef = useRef<((quick?: boolean) => void) | null>(null);
+  const createMosaicFromImageRef = useRef<((imageUrl: string, quick?: boolean, gapMultiplier?: number) => void) | null>(null);
+  const initialPositionsRef = useRef<{x: number, y: number}[]>([]);
+  const isBotRunningRef = useRef(false);
+  const isColorBotRunningRef = useRef(false);
 
   const [placedPieces, setPlacedPieces] = useState(0);
   const [totalPieces, setTotalPieces] = useState(pieceCount);
   const [playerCount, setPlayerCount] = useState(1);
   const [playTime, setPlayTime] = useState(0);
+  const [isColorBotLoading, setIsColorBotLoading] = useState(false);
   const [scores, setScores] = useState<{username: string, score: number}[]>([]);
   const [activeUsers, setActiveUsers] = useState<Set<string>>(new Set());
   const [showLeaderboard, setShowLeaderboard] = useState(false);
   const [showColorPicker, setShowColorPicker] = useState(false);
+  const [showBotMenu, setShowBotMenu] = useState(false);
+  const [showMosaicModal, setShowMosaicModal] = useState(false);
+  const [mosaicUrl, setMosaicUrl] = useState("https://ewbjogsolylcbfmpmyfa.supabase.co/storage/v1/object/public/checki/2.jpg");
+  const [mosaicQuick, setMosaicQuick] = useState(false);
+  const [mosaicGap, setMosaicGap] = useState(1.6);
   const [bgColor, setBgColor] = useState('#1e293b'); // default slate-800
   const [maxPlayers, setMaxPlayers] = useState(8);
 
   const PRESET_COLORS = [
     '#0f172a', // slate-900
     '#1e293b', // slate-800
+    '#475569', // slate-600
+    '#94a3b8', // slate-400
     '#171717', // neutral-900
     '#1c1917', // stone-900
     '#020617', // slate-950
@@ -708,10 +722,67 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
           return;
         }
 
-        const TARGET_PIECE_COUNT = pieceCount;
+        // Calculate optimal background color based on image brightness
+        try {
+          const img = new Image();
+          img.crossOrigin = 'anonymous';
+          img.src = imageUrl;
+          await new Promise((resolve, reject) => {
+            img.onload = resolve;
+            img.onerror = reject;
+          });
+          const colorCanvas = document.createElement('canvas');
+          colorCanvas.width = 50;
+          colorCanvas.height = 50;
+          const colorCtx = colorCanvas.getContext('2d');
+          if (colorCtx) {
+            colorCtx.drawImage(img, 0, 0, 50, 50);
+            const imgData = colorCtx.getImageData(0, 0, 50, 50).data;
+            let r = 0, g = 0, b = 0;
+            for (let i = 0; i < imgData.length; i += 4) {
+              r += imgData[i];
+              g += imgData[i + 1];
+              b += imgData[i + 2];
+            }
+            const pixelCount = imgData.length / 4;
+            r /= pixelCount;
+            g /= pixelCount;
+            b /= pixelCount;
+            
+            const brightness = (r * 299 + g * 587 + b * 114) / 1000;
+            
+            // For eye comfort and piece distinction:
+            // If image is bright, use a very dark slate
+            // If image is dark, use a lighter slate
+            // If mid-tone, use the default slate-800
+            let newBgColor = '#1e293b'; // default slate-800
+            if (brightness > 180) {
+              newBgColor = '#0f172a'; // slate-900 (very dark)
+            } else if (brightness < 80) {
+              newBgColor = '#475569'; // slate-600 (lighter)
+            }
+            setBgColor(newBgColor);
+          }
+        } catch (e) {
+          console.error('Failed to calculate average color', e);
+        }
+
+        let TARGET_PIECE_COUNT = Math.min(1000, pieceCount);
         const aspectRatio = texture.width / texture.height;
-        const GRID_ROWS = Math.max(1, Math.round(Math.sqrt(TARGET_PIECE_COUNT / Math.max(0.1, aspectRatio))));
-        const GRID_COLS = Math.max(1, Math.round(aspectRatio * GRID_ROWS));
+        let GRID_ROWS = Math.max(1, Math.round(Math.sqrt(TARGET_PIECE_COUNT / Math.max(0.1, aspectRatio))));
+        let GRID_COLS = Math.max(1, Math.round(aspectRatio * GRID_ROWS));
+        
+        while (GRID_ROWS * GRID_COLS > 1000) {
+          TARGET_PIECE_COUNT -= 10;
+          if (TARGET_PIECE_COUNT <= 10) {
+            GRID_ROWS = Math.max(1, Math.floor(Math.sqrt(10 / Math.max(0.1, aspectRatio))));
+            GRID_COLS = Math.max(1, Math.floor(aspectRatio * GRID_ROWS));
+            break;
+          }
+          GRID_ROWS = Math.max(1, Math.round(Math.sqrt(TARGET_PIECE_COUNT / Math.max(0.1, aspectRatio))));
+          GRID_COLS = Math.max(1, Math.round(aspectRatio * GRID_ROWS));
+        }
+        
         const PIECE_COUNT = GRID_COLS * GRID_ROWS;
         setTotalPieces(PIECE_COUNT);
 
@@ -730,7 +801,8 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
         const initialFitScale = Math.min(app.screen.width / boundingBoxSize, app.screen.height / boundingBoxSize, 1);
         world.scale.set(initialFitScale);
         world.x = (app.screen.width - boardWidth * initialFitScale) / 2;
-        world.y = (app.screen.height - boardHeight * initialFitScale) / 2;
+        // Shift the board up slightly since pieces are only placed on the bottom, left, and right
+        world.y = (app.screen.height - boardHeight * initialFitScale) / 3;
 
         // 퍼즐 판 배경 그리기
         const boardBg = new PIXI.Graphics();
@@ -1101,7 +1173,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
           const dbUpdates: any[] = [];
           if (snapped) {
             if (typeof navigator !== 'undefined' && navigator.vibrate) {
-              navigator.vibrate(50);
+              navigator.vibrate(25);
             }
             
             cluster.forEach(id => {
@@ -1168,6 +1240,1012 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
           isDraggingSelected = false;
         };
 
+        const gatherBorders = async () => {
+          if (isBotRunningRef.current) {
+            isBotRunningRef.current = false;
+            return;
+          }
+          isBotRunningRef.current = true;
+          isColorBotRunningRef.current = false;
+
+          const corners: number[] = [];
+          const topPieces: number[] = [];
+          const bottomPieces: number[] = [];
+          const leftPieces: number[] = [];
+          const rightPieces: number[] = [];
+          const nonBorderPieces: number[] = [];
+
+          for (let i = 0; i < PIECE_COUNT; i++) {
+            const p = pieces.current.get(i);
+            if (p && p.eventMode !== 'none') {
+              // Exclude pieces that are inside the puzzle board area
+              const centerX = p.x + pieceWidth / 2;
+              const centerY = p.y + pieceHeight / 2;
+              const isOnBoard = centerX >= boardStartX && centerX <= boardStartX + boardWidth && centerY >= boardStartY && centerY <= boardStartY + boardHeight;
+              if (isOnBoard) continue;
+
+              // Exclude pieces that are already combined with others
+              if (getConnectedCluster(i).size > 1) continue;
+
+              const col = i % GRID_COLS;
+              const row = Math.floor(i / GRID_COLS);
+              
+              const isTop = row === 0;
+              const isBottom = row === GRID_ROWS - 1;
+              const isLeft = col === 0;
+              const isRight = col === GRID_COLS - 1;
+
+              if ((isTop && isLeft) || (isTop && isRight) || (isBottom && isLeft) || (isBottom && isRight)) {
+                corners.push(i);
+              } else if (isTop) {
+                topPieces.push(i);
+              } else if (isBottom) {
+                bottomPieces.push(i);
+              } else if (isLeft) {
+                leftPieces.push(i);
+              } else if (isRight) {
+                rightPieces.push(i);
+              } else {
+                nonBorderPieces.push(i);
+              }
+            }
+          }
+
+          const allBorderPieces = [...corners, ...topPieces, ...bottomPieces, ...leftPieces, ...rightPieces];
+          if (allBorderPieces.length === 0) {
+            isBotRunningRef.current = false;
+            return;
+          }
+
+          const botTargets = new Map<number, {x: number, y: number}>();
+          const claimedSpots: {x: number, y: number}[] = [];
+          
+          const isSpotFree = (x: number, y: number) => {
+            const minDistance = Math.min(pieceWidth, pieceHeight) * 1.2;
+            for (const spot of claimedSpots) {
+              if (Math.hypot(spot.x - x, spot.y - y) < minDistance) return false;
+            }
+            for (let i = 0; i < PIECE_COUNT; i++) {
+              const p = pieces.current.get(i);
+              if (p) {
+                if (allBorderPieces.includes(i)) continue; // Ignore pieces that the bot will move anyway
+                if (Math.hypot(p.x - x, p.y - y) < minDistance) return false;
+              }
+            }
+            return true;
+          };
+
+          const findSpot = (startX: number, startY: number, primaryStepX: number, primaryStepY: number, primaryCount: number, secondaryStepX: number, secondaryStepY: number) => {
+            let layer = 0;
+            while (layer < 15) {
+              for (let i = 0; i < primaryCount; i++) {
+                const tx = startX + i * primaryStepX + layer * secondaryStepX;
+                const ty = startY + i * primaryStepY + layer * secondaryStepY;
+                if (isSpotFree(tx, ty)) {
+                  claimedSpots.push({x: tx, y: ty});
+                  return {x: tx, y: ty};
+                }
+              }
+              layer++;
+            }
+            return {x: startX, y: startY};
+          };
+
+          const marginX = pieceWidth * 1.6;
+          const marginY = pieceHeight * 1.6;
+          const spacingX = pieceWidth * 1.6;
+          const spacingY = pieceHeight * 1.6;
+          
+          const startX_left = boardStartX + marginX;
+          const startX_right = boardStartX + boardWidth - marginX - pieceWidth;
+          const startY_top = boardStartY + marginY;
+          const startY_bottom = boardStartY + boardHeight - marginY - pieceHeight;
+
+          const yellowStartX = startX_left + spacingX;
+          const yellowCountX = Math.max(1, Math.floor((startX_right - yellowStartX) / spacingX));
+          
+          const yellowStartY = startY_top + spacingY;
+          const yellowCountY = Math.max(1, Math.floor((startY_bottom - yellowStartY) / spacingY));
+
+          // Shuffle each group
+          corners.sort(() => Math.random() - 0.5);
+          topPieces.sort(() => Math.random() - 0.5);
+          bottomPieces.sort(() => Math.random() - 0.5);
+          leftPieces.sort(() => Math.random() - 0.5);
+          rightPieces.sort(() => Math.random() - 0.5);
+
+          // Assign targets
+          corners.forEach(id => {
+            const col = id % GRID_COLS;
+            const row = Math.floor(id / GRID_COLS);
+            let tx, ty, secX, secY;
+            if (row === 0 && col === 0) {
+              tx = startX_left; ty = startY_top; secX = spacingX; secY = spacingY;
+            } else if (row === 0 && col === GRID_COLS - 1) {
+              tx = startX_right; ty = startY_top; secX = -spacingX; secY = spacingY;
+            } else if (row === GRID_ROWS - 1 && col === 0) {
+              tx = startX_left; ty = startY_bottom; secX = spacingX; secY = -spacingY;
+            } else {
+              tx = startX_right; ty = startY_bottom; secX = -spacingX; secY = -spacingY;
+            }
+            botTargets.set(id, findSpot(tx, ty, 0, 0, 1, secX, secY));
+          });
+
+          topPieces.forEach(id => {
+            botTargets.set(id, findSpot(yellowStartX, startY_top, spacingX, 0, yellowCountX, 0, spacingY));
+          });
+
+          bottomPieces.forEach(id => {
+            botTargets.set(id, findSpot(yellowStartX, startY_bottom, spacingX, 0, yellowCountX, 0, -spacingY));
+          });
+
+          leftPieces.forEach(id => {
+            botTargets.set(id, findSpot(startX_left, yellowStartY, 0, spacingY, yellowCountY, spacingX, 0));
+          });
+
+          rightPieces.forEach(id => {
+            botTargets.set(id, findSpot(startX_right, yellowStartY, 0, spacingY, yellowCountY, -spacingX, 0));
+          });
+
+          let remainingBorderPieces = [...allBorderPieces];
+
+          const botUsername = 'bot';
+          let cursorData = cursors.get(botUsername);
+          if (!cursorData) {
+            const container = new PIXI.Container();
+            const graphics = new PIXI.Graphics();
+            graphics.beginFill(0xffffff);
+            graphics.drawCircle(0, 0, 4);
+            graphics.endFill();
+            
+            const text = new PIXI.Text({
+              text: 'bot',
+              style: {
+                fontFamily: 'Arial',
+                fontSize: 12,
+                fill: 0xffffff,
+                stroke: { color: 0x000000, width: 2 },
+              }
+            });
+            text.x = 8;
+            text.y = 8;
+            
+            container.addChild(graphics);
+            container.addChild(text);
+            
+            container.x = boardStartX + boardWidth / 2;
+            container.y = boardStartY + boardHeight / 2;
+            
+            cursorsContainer.addChild(container);
+            cursorData = { container, targetX: container.x, targetY: container.y };
+            cursors.set(botUsername, cursorData);
+          }
+
+          const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+          
+          const moveCursorTo = async (tx: number, ty: number, duration: number) => {
+            if (!cursorData) return;
+            const startX = cursorData.container.x;
+            const startY = cursorData.container.y;
+            const startTime = Date.now();
+            
+            return new Promise<void>(resolve => {
+              const animate = () => {
+                const now = Date.now();
+                const progress = Math.min(1, (now - startTime) / duration);
+                const ease = progress < 0.5 ? 2 * progress * progress : -1 + (4 - 2 * progress) * progress;
+                
+                const currentX = startX + (tx - startX) * ease;
+                const currentY = startY + (ty - startY) * ease;
+                
+                cursorData!.container.x = currentX;
+                cursorData!.container.y = currentY;
+                cursorData!.targetX = currentX;
+                cursorData!.targetY = currentY;
+                
+                channelRef.current?.send({
+                  type: 'broadcast',
+                  event: 'cursorMove',
+                  payload: {
+                    username: botUsername,
+                    x: currentX,
+                    y: currentY
+                  }
+                });
+                
+                if (progress < 1) {
+                  requestAnimationFrame(animate);
+                } else {
+                  resolve();
+                }
+              };
+              requestAnimationFrame(animate);
+            });
+          };
+
+          let batchedDbUpdates: any[] = [];
+
+          while (remainingBorderPieces.length > 0) {
+            if (!isBotRunningRef.current) break;
+            
+            const currentCursorX = cursorData!.container.x;
+            const currentCursorY = cursorData!.container.y;
+            
+            // Find the closest pieces to the cursor
+            const sortedBorderPieces = remainingBorderPieces.map(id => {
+              const p = pieces.current.get(id);
+              const dist = p ? Math.hypot(p.x - currentCursorX, p.y - currentCursorY) : Infinity;
+              return { id, dist };
+            }).sort((a, b) => a.dist - b.dist);
+            
+            // Pick from the top 3 closest to add slight human imperfection
+            const poolSize = Math.min(3, sortedBorderPieces.length);
+            const selectedIdx = Math.floor(Math.random() * poolSize);
+            const id = sortedBorderPieces[selectedIdx].id;
+            
+            remainingBorderPieces = remainingBorderPieces.filter(pid => pid !== id);
+            
+            const p = pieces.current.get(id);
+            const target = botTargets.get(id);
+            if (!p || !target || p.eventMode === 'none') continue;
+
+            // Fake searching behavior (look at nearby non-border pieces)
+            if (Math.random() < 0.6 && nonBorderPieces.length > 0) {
+              const inspectCount = Math.floor(Math.random() * 2) + 1; // 1 or 2
+              for (let k = 0; k < inspectCount; k++) {
+                if (!isBotRunningRef.current) break;
+                
+                const cursorX = cursorData!.container.x;
+                const cursorY = cursorData!.container.y;
+                
+                const sortedNonBorder = [...nonBorderPieces].sort((a, b) => {
+                  const pa = pieces.current.get(a);
+                  const pb = pieces.current.get(b);
+                  if (!pa || !pb) return 0;
+                  const distA = Math.hypot(pa.x - cursorX, pa.y - cursorY);
+                  const distB = Math.hypot(pb.x - cursorX, pb.y - cursorY);
+                  return distA - distB;
+                });
+                
+                const candidates = sortedNonBorder.slice(0, 5);
+                const randomNonBorderId = candidates[Math.floor(Math.random() * candidates.length)];
+                
+                const fakeP = pieces.current.get(randomNonBorderId);
+                if (fakeP && fakeP.eventMode !== 'none') {
+                  // Move to fake piece
+                  await moveCursorTo(fakeP.x, fakeP.y, 400 + Math.random() * 200);
+                  // Pause to "inspect"
+                  await delay(150 + Math.random() * 150);
+                  // Wiggle slightly
+                  await moveCursorTo(fakeP.x + 10, fakeP.y + 10, 100);
+                  await moveCursorTo(fakeP.x - 5, fakeP.y - 5, 100);
+                  await delay(100);
+                }
+              }
+            }
+
+            // Move cursor to actual piece
+            await moveCursorTo(p.x, p.y, 500 + Math.random() * 300);
+            await delay(200); // grab delay
+            
+            // Grab piece
+            topZIndex++;
+            p.zIndex = topZIndex;
+            
+            // Move cursor and piece to target
+            const startX = p.x;
+            const startY = p.y;
+            const tx = target.x;
+            const ty = target.y;
+            const duration = 600 + Math.random() * 300;
+            const startTime = Date.now();
+            
+            await new Promise<void>(resolve => {
+              const animate = () => {
+                const now = Date.now();
+                const progress = Math.min(1, (now - startTime) / duration);
+                const ease = progress < 0.5 ? 2 * progress * progress : -1 + (4 - 2 * progress) * progress;
+                
+                const currentX = startX + (tx - startX) * ease;
+                const currentY = startY + (ty - startY) * ease;
+                
+                p.x = currentX;
+                p.y = currentY;
+                
+                cursorData!.container.x = currentX;
+                cursorData!.container.y = currentY;
+                cursorData!.targetX = currentX;
+                cursorData!.targetY = currentY;
+                
+                channelRef.current?.send({
+                  type: 'broadcast',
+                  event: 'cursorMove',
+                  payload: {
+                    username: botUsername,
+                    x: currentX,
+                    y: currentY
+                  }
+                });
+                
+                if (progress < 1) {
+                  requestAnimationFrame(animate);
+                } else {
+                  resolve();
+                }
+              };
+              requestAnimationFrame(animate);
+            });
+            
+            // Drop piece
+            const updates = [{ pieceId: id, x: p.x, y: p.y }];
+            sendMoveBatch(updates);
+            batchedDbUpdates.push({ piece_index: id, x: p.x, y: p.y, is_locked: false });
+            
+            if (batchedDbUpdates.length >= 10) {
+              savePiecesState([...batchedDbUpdates]); // Fire and forget
+              batchedDbUpdates = [];
+            }
+            
+            await delay(100 + Math.random() * 200);
+          }
+
+          if (batchedDbUpdates.length > 0) {
+            savePiecesState([...batchedDbUpdates]);
+            batchedDbUpdates = [];
+          }
+
+          if (cursorData) {
+            cursorData.container.destroy();
+            cursors.delete(botUsername);
+            channelRef.current?.send({
+              type: 'broadcast',
+              event: 'cursorMove',
+              payload: {
+                username: botUsername,
+                x: -9999,
+                y: -9999
+              }
+            });
+          }
+
+          isBotRunningRef.current = false;
+        };
+
+        const extractPieceColors = async () => {
+          const canvas = document.createElement('canvas');
+          const ctx = canvas.getContext('2d', { willReadFrequently: true });
+          if (!ctx) return null;
+
+          const img = new Image();
+          img.crossOrigin = 'anonymous';
+          img.src = imageUrl;
+          try {
+            await new Promise((resolve, reject) => {
+              img.onload = resolve;
+              img.onerror = reject;
+            });
+          } catch (e) {
+            console.error('Failed to load image for color analysis', e);
+            return null;
+          }
+
+          canvas.width = boardWidth;
+          canvas.height = boardHeight;
+          ctx.drawImage(img, 0, 0, boardWidth, boardHeight);
+
+          const getAverageColor = (x: number, y: number, w: number, h: number) => {
+            try {
+              const imgData = ctx.getImageData(x, y, w, h);
+              const data = imgData.data;
+              let r = 0, g = 0, b = 0;
+              let count = 0;
+              for (let i = 0; i < data.length; i += 16) {
+                r += data[i];
+                g += data[i+1];
+                b += data[i+2];
+                count++;
+              }
+              return { r: r/count, g: g/count, b: b/count };
+            } catch (e) {
+              return { r: 128, g: 128, b: 128 };
+            }
+          };
+
+          const rgbToHsl = (r: number, g: number, b: number) => {
+            r /= 255; g /= 255; b /= 255;
+            const max = Math.max(r, g, b), min = Math.min(r, g, b);
+            let h = 0, s = 0, l = (max + min) / 2;
+            if (max !== min) {
+              const d = max - min;
+              s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+              switch (max) {
+                case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+                case g: h = (b - r) / d + 2; break;
+                case b: h = (r - g) / d + 4; break;
+              }
+              h /= 6;
+            }
+            return { h: h * 360, s, l };
+          };
+
+          const getColorGroup = (h: number, s: number, l: number) => {
+            if (l < 0.15) return 'black';
+            if (l > 0.85) return 'white';
+            if (s < 0.15) return 'gray';
+            if (h < 30 || h >= 330) return 'red';
+            if (h < 90) return 'yellow';
+            if (h < 150) return 'green';
+            if (h < 210) return 'cyan';
+            if (h < 270) return 'blue';
+            return 'purple';
+          };
+
+          const pieceColorData = new Map<number, { group: string, h: number, s: number, l: number }>();
+          const pieceColorsRGB = new Map<number, { r: number, g: number, b: number }>();
+          const nonLockedPieces: number[] = [];
+
+          for (let i = 0; i < PIECE_COUNT; i++) {
+            const p = pieces.current.get(i);
+            if (p && p.eventMode !== 'none') {
+              // Exclude pieces that are inside the puzzle board area
+              const centerX = p.x + pieceWidth / 2;
+              const centerY = p.y + pieceHeight / 2;
+              const isOnBoard = centerX >= boardStartX && centerX <= boardStartX + boardWidth && centerY >= boardStartY && centerY <= boardStartY + boardHeight;
+              if (isOnBoard) continue;
+
+              // Exclude pieces that are already combined with others
+              if (getConnectedCluster(i).size > 1) continue;
+
+              nonLockedPieces.push(i);
+              const col = i % GRID_COLS;
+              const row = Math.floor(i / GRID_COLS);
+              const x = col * pieceWidth;
+              const y = row * pieceHeight;
+              const { r, g, b } = getAverageColor(x, y, pieceWidth, pieceHeight);
+              pieceColorsRGB.set(i, { r, g, b });
+              const { h, s, l } = rgbToHsl(r, g, b);
+              const group = getColorGroup(h, s, l);
+              pieceColorData.set(i, { group, h, s, l });
+            }
+          }
+
+          return { nonLockedPieces, pieceColorData, pieceColorsRGB };
+        };
+
+        const executeBotMoves = async (botTargets: Map<number, {x: number, y: number}>, quick: boolean) => {
+          if (quick) {
+            const updates: {pieceId: number, x: number, y: number}[] = [];
+            const dbUpdates: any[] = [];
+            
+            for (const [id, target] of botTargets.entries()) {
+              const p = pieces.current.get(id);
+              if (p && p.eventMode !== 'none') {
+                p.x = target.x;
+                p.y = target.y;
+                p.zIndex = 1000;
+                updates.push({ pieceId: id, x: target.x, y: target.y });
+                dbUpdates.push({ piece_index: id, x: target.x, y: target.y, is_locked: false });
+              }
+            }
+            
+            if (updates.length > 0) {
+              sendMoveBatch(updates);
+              await savePiecesState(dbUpdates);
+            }
+            
+            isColorBotRunningRef.current = false;
+            return;
+          }
+
+          let remainingPieces = Array.from(botTargets.keys()).filter(id => {
+            const p = pieces.current.get(id);
+            const target = botTargets.get(id);
+            if (!p || !target) return false;
+            return Math.hypot(p.x - target.x, p.y - target.y) > 10;
+          });
+          
+          const botUsername = 'bot';
+          let cursorData = cursors.get(botUsername);
+          if (!cursorData) {
+            const container = new PIXI.Container();
+            const graphics = new PIXI.Graphics();
+            graphics.beginFill(0xffffff);
+            graphics.drawCircle(0, 0, 4);
+            graphics.endFill();
+            
+            const text = new PIXI.Text({
+              text: 'bot',
+              style: {
+                fontFamily: 'Arial',
+                fontSize: 12,
+                fill: 0xffffff,
+                stroke: { color: 0x000000, width: 2 }
+              }
+            });
+            text.x = 8;
+            text.y = 8;
+            
+            container.addChild(graphics);
+            container.addChild(text);
+            
+            container.x = boardStartX + boardWidth / 2;
+            container.y = boardStartY + boardHeight / 2;
+            
+            cursorsContainer.addChild(container);
+            cursorData = { container, targetX: container.x, targetY: container.y };
+            cursors.set(botUsername, cursorData);
+          }
+
+          const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+          
+          const moveCursorTo = async (tx: number, ty: number, duration: number) => {
+            if (!cursorData) return;
+            const startX = cursorData.container.x;
+            const startY = cursorData.container.y;
+            const startTime = Date.now();
+            
+            return new Promise<void>(resolve => {
+              const animate = () => {
+                const now = Date.now();
+                const progress = Math.min(1, (now - startTime) / duration);
+                const ease = progress < 0.5 ? 2 * progress * progress : -1 + (4 - 2 * progress) * progress;
+                
+                const currentX = startX + (tx - startX) * ease;
+                const currentY = startY + (ty - startY) * ease;
+                
+                cursorData!.container.x = currentX;
+                cursorData!.container.y = currentY;
+                cursorData!.targetX = currentX;
+                cursorData!.targetY = currentY;
+                
+                channelRef.current?.send({
+                  type: 'broadcast',
+                  event: 'cursorMove',
+                  payload: {
+                    username: botUsername,
+                    x: currentX,
+                    y: currentY
+                  }
+                });
+                
+                if (progress < 1 && isColorBotRunningRef.current) {
+                  requestAnimationFrame(animate);
+                } else {
+                  resolve();
+                }
+              };
+              requestAnimationFrame(animate);
+            });
+          };
+
+          let nextPieceToMove: number | null = null;
+          let batchedDbUpdates: any[] = [];
+
+          while (remainingPieces.length > 0) {
+            if (!isColorBotRunningRef.current) break;
+            
+            let targetPieceId: number;
+
+            if (nextPieceToMove !== null && remainingPieces.includes(nextPieceToMove)) {
+              targetPieceId = nextPieceToMove;
+            } else {
+              const currentCursorX = cursorData!.container.x;
+              const currentCursorY = cursorData!.container.y;
+              
+              const sortedPieces = remainingPieces.map(id => {
+                const p = pieces.current.get(id);
+                const dist = p ? Math.hypot(p.x - currentCursorX, p.y - currentCursorY) : Infinity;
+                return { id, dist };
+              }).sort((a, b) => a.dist - b.dist);
+              
+              const poolSize = Math.min(3, sortedPieces.length);
+              const randomIndex = Math.floor(Math.random() * poolSize);
+              targetPieceId = sortedPieces[randomIndex].id;
+            }
+            
+            remainingPieces = remainingPieces.filter(id => id !== targetPieceId);
+            nextPieceToMove = null;
+            
+            const p = pieces.current.get(targetPieceId);
+            const target = botTargets.get(targetPieceId);
+            if (!p || !target || p.eventMode === 'none') continue;
+            if (dragCluster.has(targetPieceId) || (selectedCluster && selectedCluster.has(targetPieceId))) continue;
+
+            const distToPiece = Math.hypot(p.x - cursorData!.container.x, p.y - cursorData!.container.y);
+            await moveCursorTo(p.x, p.y, Math.max(200, distToPiece * 0.5));
+            if (!isColorBotRunningRef.current) break;
+
+            p.zIndex = 1000;
+            
+            const distToTarget = Math.hypot(target.x - p.x, target.y - p.y);
+            const startX = cursorData!.container.x;
+            const startY = cursorData!.container.y;
+            const startTime = Date.now();
+            const duration = Math.max(300, distToTarget * 0.6);
+            
+            await new Promise<void>(resolve => {
+              const animate = () => {
+                if (!isColorBotRunningRef.current) {
+                  resolve();
+                  return;
+                }
+                const now = Date.now();
+                const progress = Math.min(1, (now - startTime) / duration);
+                const ease = progress < 0.5 ? 2 * progress * progress : -1 + (4 - 2 * progress) * progress;
+                
+                const currentX = startX + (target.x - startX) * ease;
+                const currentY = startY + (target.y - startY) * ease;
+                
+                p.x = currentX;
+                p.y = currentY;
+                
+                cursorData!.container.x = currentX;
+                cursorData!.container.y = currentY;
+                cursorData!.targetX = currentX;
+                cursorData!.targetY = currentY;
+                
+                channelRef.current?.send({
+                  type: 'broadcast',
+                  event: 'cursorMove',
+                  payload: {
+                    username: botUsername,
+                    x: currentX,
+                    y: currentY
+                  }
+                });
+                
+                if (progress < 1) {
+                  requestAnimationFrame(animate);
+                } else {
+                  resolve();
+                }
+              };
+              requestAnimationFrame(animate);
+            });
+            
+            const updates = [{ pieceId: targetPieceId, x: p.x, y: p.y }];
+            sendMoveBatch(updates);
+            batchedDbUpdates.push({ piece_index: targetPieceId, x: p.x, y: p.y, is_locked: false });
+            
+            if (batchedDbUpdates.length >= 10) {
+              savePiecesState([...batchedDbUpdates]); // Fire and forget to avoid blocking animation
+              batchedDbUpdates = [];
+            }
+            
+            const overlappingPiece = remainingPieces.find(id => {
+               const otherP = pieces.current.get(id);
+               if (!otherP) return false;
+               return Math.hypot(otherP.x - target.x, otherP.y - target.y) < 20;
+            });
+
+            if (overlappingPiece !== undefined) {
+               nextPieceToMove = overlappingPiece;
+            }
+
+            await delay(100 + Math.random() * 200);
+          }
+
+          if (batchedDbUpdates.length > 0) {
+            savePiecesState([...batchedDbUpdates]);
+            batchedDbUpdates = [];
+          }
+
+          if (cursorData) {
+            cursorData.container.destroy();
+            cursors.delete(botUsername);
+            channelRef.current?.send({
+              type: 'broadcast',
+              event: 'cursorMove',
+              payload: {
+                username: botUsername,
+                x: -9999,
+                y: -9999
+              }
+            });
+          }
+
+          isColorBotRunningRef.current = false;
+        };
+
+        const gatherByColor = async (quick: boolean = false) => {
+          if (isColorBotRunningRef.current) {
+            isColorBotRunningRef.current = false;
+            return;
+          }
+          isColorBotRunningRef.current = true;
+          isBotRunningRef.current = false;
+          setIsColorBotLoading(true);
+
+          const colorData = await extractPieceColors();
+          if (!colorData) {
+            setIsColorBotLoading(false);
+            isColorBotRunningRef.current = false;
+            return;
+          }
+
+          const { nonLockedPieces, pieceColorData } = colorData;
+
+          if (!isColorBotRunningRef.current) return;
+
+          const colorOrder = ['red', 'yellow', 'green', 'cyan', 'blue', 'purple', 'black', 'white', 'gray'];
+          
+          nonLockedPieces.sort((a, b) => {
+            const colorA = pieceColorData.get(a)!;
+            const colorB = pieceColorData.get(b)!;
+            
+            const groupDiff = colorOrder.indexOf(colorA.group) - colorOrder.indexOf(colorB.group);
+            if (groupDiff !== 0) return groupDiff;
+            
+            if (colorA.group === 'gray' || colorA.group === 'black' || colorA.group === 'white') {
+              return colorB.l - colorA.l; // Sort by lightness
+            }
+            return colorA.h - colorB.h; // Sort by hue
+          });
+
+          const uShapedPositions = [...initialPositionsRef.current].sort((a, b) => {
+            const angleA = Math.atan2(a.y + boardHeight * 2, a.x - boardWidth / 2);
+            const angleB = Math.atan2(b.y + boardHeight * 2, b.x - boardWidth / 2);
+            return angleB - angleA;
+          });
+
+          const botTargets = new Map<number, {x: number, y: number}>();
+          for (let i = 0; i < nonLockedPieces.length; i++) {
+            const id = nonLockedPieces[i];
+            const targetPos = uShapedPositions[i];
+            if (targetPos) {
+              botTargets.set(id, { x: targetPos.x, y: targetPos.y });
+            }
+          }
+
+          setIsColorBotLoading(false);
+          await executeBotMoves(botTargets, quick);
+        };
+
+        const createMosaicFromImage = async (imageUrl: string, quick: boolean = false, gapMultiplier: number = 1.6) => {
+          if (isColorBotRunningRef.current) {
+            isColorBotRunningRef.current = false;
+            return;
+          }
+          isColorBotRunningRef.current = true;
+          isBotRunningRef.current = false;
+          setIsColorBotLoading(true);
+
+          const colorData = await extractPieceColors();
+          if (!colorData) {
+            setIsColorBotLoading(false);
+            isColorBotRunningRef.current = false;
+            return;
+          }
+
+          const { nonLockedPieces, pieceColorsRGB } = colorData;
+
+          if (!isColorBotRunningRef.current) return;
+
+          try {
+            const img = new Image();
+            img.crossOrigin = "Anonymous";
+            img.src = imageUrl;
+            
+            await new Promise((resolve, reject) => {
+              img.onload = resolve;
+              img.onerror = reject;
+            });
+
+            if (!isColorBotRunningRef.current) return;
+
+            const imgW = img.width;
+            const imgH = img.height;
+            const ar = imgW / imgH;
+
+            let cols = Math.floor(Math.sqrt(nonLockedPieces.length * ar));
+            let rows = Math.floor(cols / ar);
+            
+            if (cols * rows > nonLockedPieces.length) {
+              while (cols * rows > nonLockedPieces.length) {
+                if (cols / rows > ar) cols--;
+                else rows--;
+              }
+            }
+
+            const canvas = document.createElement('canvas');
+            canvas.width = cols;
+            canvas.height = rows;
+            const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
+            ctx.drawImage(img, 0, 0, cols, rows);
+            const imgData = ctx.getImageData(0, 0, cols, rows).data;
+
+            const pixels: {x: number, y: number, r: number, g: number, b: number}[] = [];
+            for (let y = 0; y < rows; y++) {
+              for (let x = 0; x < cols; x++) {
+                const i = (y * cols + x) * 4;
+                pixels.push({
+                  x, y,
+                  r: imgData[i],
+                  g: imgData[i+1],
+                  b: imgData[i+2]
+                });
+              }
+            }
+
+            const availablePieces = [...nonLockedPieces];
+            const botTargets = new Map<number, {x: number, y: number}>();
+
+            const mosaicWidth = cols > 0 ? (cols - 1) * (pieceWidth * gapMultiplier) + pieceWidth : 0;
+            
+            const startX = (boardWidth - mosaicWidth) / 2;
+            const startY = boardHeight + pieceHeight * 2;
+
+            // Sort pixels by color intensity (distance from gray) descending.
+            // This ensures that the most colorful and distinct parts of the image get the best matching pieces first,
+            // while the duller/grayer areas get the leftover pieces, which acts like noise/dithering.
+            const sortedPixels = [...pixels].sort((a, b) => {
+              const distA = Math.pow(a.r - 128, 2) + Math.pow(a.g - 128, 2) + Math.pow(a.b - 128, 2);
+              const distB = Math.pow(b.r - 128, 2) + Math.pow(b.g - 128, 2) + Math.pow(b.b - 128, 2);
+              return distB - distA;
+            });
+
+            for (const pixel of sortedPixels) {
+              let bestPieceIdx = -1;
+              let minDistance = Infinity;
+
+              for (let i = 0; i < availablePieces.length; i++) {
+                const pieceId = availablePieces[i];
+                const color = pieceColorsRGB.get(pieceId)!;
+                const dist = Math.pow(color.r - pixel.r, 2) + 
+                             Math.pow(color.g - pixel.g, 2) + 
+                             Math.pow(color.b - pixel.b, 2);
+                
+                if (dist < minDistance) {
+                  minDistance = dist;
+                  bestPieceIdx = i;
+                }
+              }
+
+              if (bestPieceIdx !== -1) {
+                const pieceId = availablePieces[bestPieceIdx];
+                availablePieces.splice(bestPieceIdx, 1);
+                
+                botTargets.set(pieceId, {
+                  x: startX + pixel.x * (pieceWidth * gapMultiplier),
+                  y: startY + pixel.y * (pieceHeight * gapMultiplier)
+                });
+              }
+            }
+
+            // --- Heart shape logic for leftover pieces ---
+            const leftoverCount = availablePieces.length;
+            if (leftoverCount > 0) {
+              const leftCount = Math.floor(leftoverCount / 2);
+              const rightCount = Math.ceil(leftoverCount / 2);
+
+              const getHeartPoints = (count: number) => {
+                if (count === 0) return [];
+                let low = 0.1;
+                let high = 50.0;
+                let bestPoints: {x: number, y: number, val: number}[] = [];
+                for (let iter = 0; iter < 30; iter++) {
+                  let mid = (low + high) / 2;
+                  let currentPoints: {x: number, y: number, val: number}[] = [];
+                  let bound = Math.ceil(mid * 1.5);
+                  for (let y = -bound; y <= bound; y++) {
+                    for (let x = -bound; x <= bound; x++) {
+                      let nx = x / mid;
+                      let ny = -y / mid;
+                      // Heart equation: (x^2 + y^2 - 1)^3 - x^2 * y^3 <= 0
+                      let val = Math.pow(nx*nx + ny*ny - 1, 3) - nx*nx * ny*ny*ny;
+                      if (val <= 0) {
+                        currentPoints.push({x, y, val});
+                      }
+                    }
+                  }
+                  if (currentPoints.length >= count) {
+                    bestPoints = currentPoints;
+                    high = mid;
+                  } else {
+                    low = mid;
+                  }
+                }
+                // Sort by val ascending (most negative first, which means deepest inside the heart)
+                bestPoints.sort((a, b) => a.val - b.val);
+                return bestPoints.slice(0, count);
+              };
+
+              const leftHeart = getHeartPoints(leftCount);
+              const rightHeart = getHeartPoints(rightCount);
+
+              const getBounds = (pts: {x: number, y: number}[]) => {
+                if (pts.length === 0) return {minX: 0, maxX: 0, minY: 0, maxY: 0};
+                let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+                for (let p of pts) {
+                  if (p.x < minX) minX = p.x;
+                  if (p.x > maxX) maxX = p.x;
+                  if (p.y < minY) minY = p.y;
+                  if (p.y > maxY) maxY = p.y;
+                }
+                return {minX, maxX, minY, maxY};
+              };
+
+              const leftBounds = getBounds(leftHeart);
+              const rightBounds = getBounds(rightHeart);
+
+              const mosaicHeight = rows > 0 ? (rows - 1) * (pieceHeight * gapMultiplier) + pieceHeight : 0;
+              const centerY = startY + mosaicHeight / 2;
+              
+              const padding = pieceWidth * gapMultiplier * 2;
+              const scaleX = pieceWidth * gapMultiplier;
+              const scaleY = pieceHeight * gapMultiplier;
+
+              const leftHeartCenterX = startX - padding - leftBounds.maxX * scaleX;
+              const leftHeartCenterY = centerY - ((leftBounds.minY + leftBounds.maxY) / 2) * scaleY;
+
+              const rightHeartCenterX = startX + mosaicWidth + padding - rightBounds.minX * scaleX;
+              const rightHeartCenterY = centerY - ((rightBounds.minY + rightBounds.maxY) / 2) * scaleY;
+
+              // Sort remaining pieces so the most "red" ones are at the end (to be popped first)
+              // This makes the center of the hearts red!
+              availablePieces.sort((a, b) => {
+                const cA = pieceColorsRGB.get(a)!;
+                const cB = pieceColorsRGB.get(b)!;
+                const redA = cA.r - cA.g - cA.b;
+                const redB = cB.r - cB.g - cB.b;
+                return redA - redB; // Least red first
+              });
+
+              for (let i = 0; i < Math.max(leftHeart.length, rightHeart.length); i++) {
+                if (i < leftHeart.length && availablePieces.length > 0) {
+                  const pieceId = availablePieces.pop()!;
+                  botTargets.set(pieceId, {
+                    x: leftHeartCenterX + leftHeart[i].x * scaleX,
+                    y: leftHeartCenterY + leftHeart[i].y * scaleY
+                  });
+                }
+                if (i < rightHeart.length && availablePieces.length > 0) {
+                  const pieceId = availablePieces.pop()!;
+                  botTargets.set(pieceId, {
+                    x: rightHeartCenterX + rightHeart[i].x * scaleX,
+                    y: rightHeartCenterY + rightHeart[i].y * scaleY
+                  });
+                }
+              }
+
+              // Place any remaining pieces at the bottom
+              if (availablePieces.length > 0) {
+                const bottomY = startY + mosaicHeight + pieceHeight * 4;
+                const piecesPerRow = Math.max(1, Math.floor(boardWidth / (pieceWidth * gapMultiplier)));
+                
+                for (let i = 0; i < availablePieces.length; i++) {
+                  const pieceId = availablePieces[i];
+                  const row = Math.floor(i / piecesPerRow);
+                  const col = i % piecesPerRow;
+                  
+                  // Calculate row width for centering
+                  const piecesInThisRow = row === Math.floor(availablePieces.length / piecesPerRow) 
+                    ? availablePieces.length % piecesPerRow 
+                    : piecesPerRow;
+                  const rowWidth = (piecesInThisRow > 0 ? piecesInThisRow : piecesPerRow) * pieceWidth * gapMultiplier;
+                  
+                  botTargets.set(pieceId, {
+                    x: (boardWidth - rowWidth) / 2 + col * pieceWidth * gapMultiplier,
+                    y: bottomY + row * pieceHeight * gapMultiplier
+                  });
+                }
+              }
+            }
+
+            setIsColorBotLoading(false);
+            await executeBotMoves(botTargets, quick);
+          } catch (error) {
+            console.error("Failed to load image for mosaic:", error);
+            setIsColorBotLoading(false);
+            isColorBotRunningRef.current = false;
+            // We can't use alert in iframe, so we'll just log it.
+          }
+        };
+
+        gatherBordersRef.current = gatherBorders;
+        gatherByColorRef.current = gatherByColor;
+        createMosaicFromImageRef.current = createMosaicFromImage;
+
         const spacingX = pieceWidth * 1.6;
         const spacingY = pieceHeight * 1.6;
         
@@ -1180,43 +2258,55 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
 
         const initialPositions: {x: number, y: number}[] = [];
         let placeLayer = 1;
-        let placeSide = 0; // 0: Top, 1: Right, 2: Bottom, 3: Left
-        let placeStep = 0;
-        let initialPlacedCount = 0;
         
-        for (let i = 0; i < PIECE_COUNT; i++) {
-          let px = 0, py = 0;
+        while (initialPositions.length < PIECE_COUNT) {
           const minX = -placeLayer * spacingX;
-          const minY = -placeLayer * spacingY;
-          const maxX = boardWidth + placeLayer * spacingX;
-          const maxY = boardHeight + placeLayer * spacingY;
+          // Adjust maxX and maxY by pieceWidth/pieceHeight so the visual gap is symmetric
+          // (since piece coordinates represent their top-left corner)
+          const maxX = boardWidth - pieceWidth + placeLayer * spacingX;
+          const minY = 0; // Start from the top edge of the board
+          const maxY = boardHeight - pieceHeight + placeLayer * spacingY;
 
           const countX = Math.ceil((maxX - minX) / spacingX);
           const countY = Math.ceil((maxY - minY) / spacingY);
 
-          if (placeSide === 0) {
-            px = minX + placeStep * ((maxX - minX) / countX);
-            py = minY;
-            placeStep++;
-            if (placeStep >= countX) { placeSide = 1; placeStep = 0; }
-          } else if (placeSide === 1) {
-            px = maxX;
-            py = minY + placeStep * ((maxY - minY) / countY);
-            placeStep++;
-            if (placeStep >= countY) { placeSide = 2; placeStep = 0; }
-          } else if (placeSide === 2) {
-            px = maxX - placeStep * ((maxX - minX) / countX);
-            py = maxY;
-            placeStep++;
-            if (placeStep >= countX) { placeSide = 3; placeStep = 0; }
-          } else if (placeSide === 3) {
-            px = minX;
-            py = maxY - placeStep * ((maxY - minY) / countY);
-            placeStep++;
-            if (placeStep >= countY) { placeSide = 0; placeStep = 0; placeLayer++; }
+          const layerPositions: {x: number, y: number}[] = [];
+
+          // 1. Left and Right edges (from top to bottom)
+          for (let stepY = 0; stepY <= countY; stepY++) {
+            const py = minY + stepY * ((maxY - minY) / countY);
+            layerPositions.push({ x: minX, y: py });
+            layerPositions.push({ x: maxX, y: py });
           }
-          initialPositions.push({x: px, y: py});
+
+          // 2. Bottom edge (from outside to inside)
+          let leftStep = 1;
+          let rightStep = countX - 1;
+          while (leftStep <= rightStep) {
+            const pxLeft = minX + leftStep * ((maxX - minX) / countX);
+            layerPositions.push({ x: pxLeft, y: maxY });
+            if (leftStep !== rightStep) {
+              const pxRight = minX + rightStep * ((maxX - minX) / countX);
+              layerPositions.push({ x: pxRight, y: maxY });
+            }
+            leftStep++;
+            rightStep--;
+          }
+
+          // Add to initialPositions until we reach PIECE_COUNT
+          // To ensure symmetry, we add in pairs (left/right) when possible
+          for (let i = 0; i < layerPositions.length; i++) {
+            if (initialPositions.length < PIECE_COUNT) {
+              initialPositions.push(layerPositions[i]);
+            } else {
+              break;
+            }
+          }
+
+          placeLayer++;
         }
+        
+        initialPositionsRef.current = [...initialPositions];
         
         if (!hasExistingState) {
           // Shuffle positions
@@ -1282,6 +2372,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
           }
         }
 
+        let initialPlacedCount = 0;
         for (let i = 0; i < PIECE_COUNT; i++) {
           const col = i % GRID_COLS;
           const row = Math.floor(i / GRID_COLS);
@@ -1502,12 +2593,14 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
               graphics.drawCircle(0, 0, 4);
               graphics.endFill();
               
-              const text = new PIXI.Text(username, {
-                fontFamily: 'Arial',
-                fontSize: 12,
-                fill: 0xffffff,
-                stroke: 0x000000,
-                strokeThickness: 3
+              const text = new PIXI.Text({
+                text: username,
+                style: {
+                  fontFamily: 'Arial',
+                  fontSize: 12,
+                  fill: 0xffffff,
+                  stroke: { color: 0x000000, width: 3 }
+                }
               });
               text.x = 8;
               text.y = -6;
@@ -1541,7 +2634,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
             
             // Remove cursors for users who left
             cursors.forEach((cursorData, username) => {
-              if (!users.has(username)) {
+              if (!users.has(username) && username !== 'bot') {
                 cursorData.container.destroy();
                 cursors.delete(username);
               }
@@ -1562,6 +2655,8 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
 
     return () => {
       isMounted = false;
+      isBotRunningRef.current = false;
+      isColorBotRunningRef.current = false;
       if (appInstance) {
         appInstance.destroy(true);
       }
@@ -1622,6 +2717,91 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
           <div className="flex items-center gap-1 sm:gap-2 bg-slate-800/50 px-2 sm:px-3 py-1.5 rounded-lg border border-slate-700/50 flex-1 sm:flex-none justify-center">
             <Clock size={14} className="text-slate-400 sm:w-4 sm:h-4" />
             <span className="text-xs sm:text-sm font-medium font-mono whitespace-nowrap">{formatTime(playTime)}</span>
+          </div>
+
+          <div className="relative">
+            <button
+              onClick={() => setShowBotMenu(!showBotMenu)}
+              className={`flex items-center gap-1 sm:gap-2 px-2 sm:px-3 py-1.5 rounded-lg border transition-colors shrink-0 ${showBotMenu ? 'bg-indigo-500/20 border-indigo-500/50 text-indigo-400' : 'bg-slate-800/50 border-slate-700/50 text-slate-400 hover:bg-slate-700 hover:text-white'}`}
+              title="Bot Actions"
+            >
+              <Bot size={14} className={`sm:w-4 sm:h-4 ${isColorBotLoading ? 'animate-pulse text-indigo-400' : ''}`} />
+              <span className="hidden sm:inline text-sm font-medium">Bot</span>
+            </button>
+            
+            {showBotMenu && (
+              <div className="absolute top-full mt-2 right-0 bg-slate-800 border border-slate-700 rounded-xl shadow-2xl p-3 z-50 animate-in fade-in slide-in-from-top-2 w-48">
+                <div className="flex items-center justify-between mb-3 border-b border-slate-700 pb-2">
+                  <span className="text-xs font-bold text-slate-300 uppercase tracking-wider">Bot Actions</span>
+                  <button onClick={() => setShowBotMenu(false)} className="text-slate-500 hover:text-white">
+                    <X size={14} />
+                  </button>
+                </div>
+                
+                <div className="flex flex-col gap-2">
+                  <button
+                    onClick={() => {
+                      gatherBordersRef.current?.();
+                      setShowBotMenu(false);
+                    }}
+                    className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-900/50 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors text-sm text-left"
+                  >
+                    <LayoutGrid size={14} />
+                    <span>Gather Borders</span>
+                  </button>
+                  
+                  <button
+                    onClick={() => {
+                      gatherByColorRef.current?.(false);
+                      setShowBotMenu(false);
+                    }}
+                    disabled={isColorBotLoading}
+                    className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-900/50 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors text-sm text-left disabled:opacity-50"
+                  >
+                    <Palette size={14} />
+                    <span>Group by Color</span>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      gatherByColorRef.current?.(true);
+                      setShowBotMenu(false);
+                    }}
+                    disabled={isColorBotLoading}
+                    className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-900/50 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors text-sm text-left disabled:opacity-50"
+                  >
+                    <Zap size={14} className="text-amber-400" />
+                    <span>Quick Group</span>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setMosaicQuick(false);
+                      setShowMosaicModal(true);
+                      setShowBotMenu(false);
+                    }}
+                    disabled={isColorBotLoading}
+                    className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-900/50 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors text-sm text-left disabled:opacity-50"
+                  >
+                    <ImageIcon size={14} className="text-blue-400" />
+                    <span>Image Mosaic</span>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setMosaicQuick(true);
+                      setShowMosaicModal(true);
+                      setShowBotMenu(false);
+                    }}
+                    disabled={isColorBotLoading}
+                    className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-900/50 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors text-sm text-left disabled:opacity-50"
+                  >
+                    <Zap size={14} className="text-amber-400" />
+                    <span>Quick Mosaic</span>
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="relative">
@@ -1724,6 +2904,72 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
       )}
 
       <div ref={pixiContainer} className="w-full h-full overflow-hidden" />
+
+      {showMosaicModal && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-slate-800 border border-slate-700 rounded-xl shadow-2xl w-full max-w-md overflow-hidden">
+            <div className="p-4 border-b border-slate-700 flex items-center justify-between bg-slate-800/50">
+              <div className="flex items-center gap-2">
+                <ImageIcon size={18} className="text-blue-400" />
+                <h3 className="font-bold text-white">Create Image Mosaic</h3>
+              </div>
+              <button onClick={() => setShowMosaicModal(false)} className="text-slate-400 hover:text-white transition-colors">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="p-4 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-300 mb-1">Image URL</label>
+                <input
+                  type="text"
+                  value={mosaicUrl}
+                  onChange={(e) => setMosaicUrl(e.target.value)}
+                  placeholder="https://example.com/image.jpg"
+                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <p className="text-xs text-slate-500 mt-2">
+                  Enter a direct link to an image. CORS must be enabled on the image host.
+                </p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-300 mb-1">Piece Gap Multiplier</label>
+                <input
+                  type="number"
+                  step="0.1"
+                  min="1.0"
+                  max="5.0"
+                  value={mosaicGap}
+                  onChange={(e) => setMosaicGap(parseFloat(e.target.value) || 1.6)}
+                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <p className="text-xs text-slate-500 mt-2">
+                  1.0 means no gap. 1.6 is the default initial spacing.
+                </p>
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  onClick={() => setShowMosaicModal(false)}
+                  className="px-4 py-2 rounded-lg text-sm font-medium text-slate-300 hover:text-white hover:bg-slate-700 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    setShowMosaicModal(false);
+                    if (mosaicUrl) {
+                      createMosaicFromImageRef.current?.(mosaicUrl, mosaicQuick, mosaicGap);
+                    }
+                  }}
+                  className="px-4 py-2 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-500 transition-colors flex items-center gap-2"
+                >
+                  {mosaicQuick ? <Zap size={14} /> : <ImageIcon size={14} />}
+                  Create Mosaic
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
