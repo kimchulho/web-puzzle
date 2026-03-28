@@ -2542,32 +2542,77 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
 
           const pieceContainer = new PIXI.Container();
           
+          const applyPieceShape = (g: PIXI.Graphics) => {
+            g.moveTo(0, 0);
+            drawEdge(g, 0, 0, pieceWidth, 0, topTab, tabDepth);
+            drawEdge(g, pieceWidth, 0, pieceWidth, pieceHeight, rightTab, tabDepth);
+            drawEdge(g, pieceWidth, pieceHeight, 0, pieceHeight, bottomTab, tabDepth);
+            drawEdge(g, 0, pieceHeight, 0, 0, leftTab, tabDepth);
+            g.closePath();
+          };
+
           const pieceGraphics = new PIXI.Graphics();
-          pieceGraphics.moveTo(0, 0);
-          drawEdge(pieceGraphics, 0, 0, pieceWidth, 0, topTab, tabDepth);
-          drawEdge(pieceGraphics, pieceWidth, 0, pieceWidth, pieceHeight, rightTab, tabDepth);
-          drawEdge(pieceGraphics, pieceWidth, pieceHeight, 0, pieceHeight, bottomTab, tabDepth);
-          drawEdge(pieceGraphics, 0, pieceHeight, 0, 0, leftTab, tabDepth);
+          applyPieceShape(pieceGraphics);
           
           const matrix = new PIXI.Matrix();
           matrix.scale(boardWidth / texture.width, boardHeight / texture.height);
           matrix.translate(-col * pieceWidth, -row * pieceHeight);
           
-          // 조각 크기에 비례하는 두께 계산 (조각 너비의 약 1.5%)
-          const strokeWidth = Math.max(1.5, pieceWidth * 0.015);
+          // 조각 외곽선 두께 0.25px
+          const strokeWidth = 0.25;
           
           pieceGraphics.fill({ texture: texture, matrix: matrix, textureSpace: 'global' });
-          // 안티앨리어싱(Anti-aliasing)으로 인해 조각 사이에 생기는 미세한 반투명 틈(Seam)을 메우기 위해,
-          // 검은색 선 대신 '원본 이미지(텍스처)' 자체를 1.5px 두께로 외곽선처럼 그려서 살짝 겹치게 만듭니다.
-          pieceGraphics.stroke({ texture: texture, matrix: matrix, textureSpace: 'global', width: 1.5 });
+          // 퍼즐 조각 외곽선 (검은색 25%)
+          pieceGraphics.stroke({ color: 0x000000, alpha: 0.25, width: strokeWidth });
+
+          // --- 베벨(입체) 효과 적용 ---
+          const ENABLE_BEVEL = true; // 베벨 효과 켜기/끄기 옵션
+          let renderTarget: PIXI.Container | PIXI.Graphics = pieceGraphics;
+
+          if (ENABLE_BEVEL) {
+            const bevelContainer = new PIXI.Container();
+            bevelContainer.addChild(pieceGraphics);
+
+            // 밝은 하이라이트 (좌상단)
+            const whiteLine = new PIXI.Graphics();
+            applyPieceShape(whiteLine);
+            whiteLine.stroke({ width: 1, color: 0xffffff, alpha: 0.6 });
+            whiteLine.x = 1; // 오른쪽 아래로 밀어서 좌상단 안쪽으로 들어오게 함
+            whiteLine.y = 1;
+            whiteLine.blendMode = 'overlay'; // 오버레이 블렌드 모드 적용
+            const blurWhite = new PIXI.BlurFilter();
+            blurWhite.blur = 1;
+            whiteLine.filters = [blurWhite];
+
+            // 어두운 그림자 (우하단)
+            const blackLine = new PIXI.Graphics();
+            applyPieceShape(blackLine);
+            blackLine.stroke({ width: 1, color: 0x000000, alpha: 0.6 });
+            blackLine.x = -1; // 왼쪽 위로 밀어서 우하단 안쪽으로 들어오게 함
+            blackLine.y = -1;
+            blackLine.blendMode = 'overlay'; // 오버레이 블렌드 모드 적용
+            const blurBlack = new PIXI.BlurFilter();
+            blurBlack.blur = 1;
+            blackLine.filters = [blurBlack];
+
+            // 마스크 (선이 조각 바깥으로 삐져나가지 않도록)
+            const maskGraphics = new PIXI.Graphics();
+            applyPieceShape(maskGraphics);
+            maskGraphics.fill({ color: 0xffffff });
+
+            bevelContainer.addChild(whiteLine);
+            bevelContainer.addChild(blackLine);
+            bevelContainer.addChild(maskGraphics);
+            
+            whiteLine.mask = maskGraphics;
+            blackLine.mask = maskGraphics;
+
+            renderTarget = bevelContainer;
+          }
+          // -----------------------------
 
           const highlightGraphics = new PIXI.Graphics();
-          highlightGraphics.moveTo(0, 0);
-          drawEdge(highlightGraphics, 0, 0, pieceWidth, 0, topTab, tabDepth);
-          drawEdge(highlightGraphics, pieceWidth, 0, pieceWidth, pieceHeight, rightTab, tabDepth);
-          drawEdge(highlightGraphics, pieceWidth, pieceHeight, 0, pieceHeight, bottomTab, tabDepth);
-          drawEdge(highlightGraphics, 0, pieceHeight, 0, 0, leftTab, tabDepth);
-          highlightGraphics.closePath();
+          applyPieceShape(highlightGraphics);
           highlightGraphics.stroke({ width: strokeWidth * 2, color: 0x00ff00, alpha: 0.8 });
 
           // 렌더링 최적화: 벡터 그래픽을 텍스처로 변환하여 Sprite로 사용
@@ -2594,7 +2639,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
           );
           
           const pieceTexture = app.renderer.generateTexture({
-            target: pieceGraphics,
+            target: renderTarget,
             resolution: targetResolution,
             frame: frame
           });
@@ -2622,7 +2667,11 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
           pieceContainer.cullable = true;
 
           // 메모리 누수 방지를 위해 원본 그래픽 파괴
-          pieceGraphics.destroy();
+          if (ENABLE_BEVEL) {
+            (renderTarget as PIXI.Container).destroy({ children: true });
+          } else {
+            pieceGraphics.destroy();
+          }
           highlightGraphics.destroy();
 
           // 퍼즐판 바깥에 겹치지 않게 배치
