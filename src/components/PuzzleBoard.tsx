@@ -2579,7 +2579,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
             whiteLine.stroke({ width: 1, color: 0xffffff, alpha: 0.6 });
             whiteLine.x = 1; // 오른쪽 아래로 밀어서 좌상단 안쪽으로 들어오게 함
             whiteLine.y = 1;
-            whiteLine.blendMode = 'overlay'; // 오버레이 블렌드 모드 적용
+            whiteLine.blendMode = 'screen'; // 스크린 블렌드 모드 적용 (자연스러운 빛 반사)
             const blurWhite = new PIXI.BlurFilter();
             blurWhite.blur = 1;
             whiteLine.filters = [blurWhite];
@@ -2590,7 +2590,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
             blackLine.stroke({ width: 1, color: 0x000000, alpha: 0.6 });
             blackLine.x = -1; // 왼쪽 위로 밀어서 우하단 안쪽으로 들어오게 함
             blackLine.y = -1;
-            blackLine.blendMode = 'overlay'; // 오버레이 블렌드 모드 적용
+            blackLine.blendMode = 'multiply'; // 곱하기 블렌드 모드 적용 (자연스러운 그림자)
             const blurBlack = new PIXI.BlurFilter();
             blurBlack.blur = 1;
             blackLine.filters = [blurBlack];
