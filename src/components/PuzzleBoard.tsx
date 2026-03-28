@@ -2546,8 +2546,11 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
           const matrix = new PIXI.Matrix();
           matrix.translate(-col * pieceWidth, -row * pieceHeight);
           
+          // 조각 크기에 비례하는 두께 계산 (조각 너비의 약 1.5%)
+          const strokeWidth = Math.max(1.5, pieceWidth * 0.015);
+          
           pieceGraphics.fill({ texture: texture, matrix: matrix, textureSpace: 'global' });
-          pieceGraphics.stroke({ width: 2, color: 0x000000, alpha: 0.3 });
+          pieceGraphics.stroke({ width: strokeWidth, color: 0x000000, alpha: 0.3 });
 
           const highlightGraphics = new PIXI.Graphics();
           highlightGraphics.moveTo(0, 0);
@@ -2556,7 +2559,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
           drawEdge(highlightGraphics, pieceWidth, pieceHeight, 0, pieceHeight, bottomTab, tabDepth);
           drawEdge(highlightGraphics, 0, pieceHeight, 0, 0, leftTab, tabDepth);
           highlightGraphics.closePath();
-          highlightGraphics.stroke({ width: 4, color: 0x00ff00, alpha: 0.8 });
+          highlightGraphics.stroke({ width: strokeWidth * 2, color: 0x00ff00, alpha: 0.8 });
 
           // 렌더링 최적화: 벡터 그래픽을 텍스처로 변환하여 Sprite로 사용
           // 퍼즐 조각 텍스처 해상도를 100px 수준으로 제한하여 메모리/성능 최적화
