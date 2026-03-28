@@ -2580,13 +2580,12 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
           const bevelThickness = Math.max(1.0, baseSize * 0.03);
           const highlightStrokeWidth = Math.max(1, baseSize * 0.03);
 
-          // 3. 텍스처 해상도 계산 (조각당 200px 목표)
+          // 3. 텍스처 해상도 계산 (저사양 PC 최적화를 위해 기존 대비 50% 수준으로 감소)
           // 원본 이미지를 그대로 사용하되, 렌더링 시 해상도를 높여서 선명하게 만듭니다.
-          const TARGET_PIECE_PIXELS = 200;
-          const baseDpr = Math.min(window.devicePixelRatio || 1, 2);
-          // 조각의 실제 픽셀 크기가 목표(200px)보다 작으면, 그 비율만큼 해상도를 높입니다.
+          const TARGET_PIECE_PIXELS = 100; // 200px -> 100px로 50% 감소
+          const baseDpr = Math.min(window.devicePixelRatio || 1, 1); // 최대 2배수 렌더링을 1배수로 제한
+          // 조각의 실제 픽셀 크기가 목표(100px)보다 작으면, 그 비율만큼 해상도를 높입니다.
           const textureResolution = Math.max(baseDpr, TARGET_PIECE_PIXELS / Math.max(pieceWidth, pieceHeight));
-          const filterResolution = textureResolution * 2; // 필터 해상도를 2배로 높여 안티앨리어싱 효과 강화
 
           pieceGraphics.fill({ texture: texture, matrix: matrix, textureSpace: 'global' });
           pieceGraphics.stroke({ width: strokeWidth, color: 0x000000, alpha: 0.2 });
@@ -2610,7 +2609,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
 
           // 흰색 라인에 블러(Blur) 효과 적용하여 부드럽게 만들기
           const blurFilter = new PIXI.BlurFilter();
-          blurFilter.blur = Math.max(0.5, baseSize * 0.0075); // 기존 0.015의 절반으로 블러 강도 조절
+          blurFilter.blur = bevelThickness * 3; // 라인 두께의 3배로 블러 강도 조절
           whiteLineGraphics.filters = [blurFilter];
 
           const blackLineGraphics = new PIXI.Graphics();
@@ -2626,7 +2625,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
 
           // 검은색 라인(그림자)에도 블러(Blur) 효과 적용
           const blackBlurFilter = new PIXI.BlurFilter();
-          blackBlurFilter.blur = Math.max(0.5, baseSize * 0.0075);
+          blackBlurFilter.blur = bevelThickness * 3; // 라인 두께의 3배로 블러 강도 조절
           blackLineGraphics.filters = [blackBlurFilter];
 
           const maskGraphics = new PIXI.Graphics();
