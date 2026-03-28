@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as PIXI from 'pixi.js';
+import { BevelFilter, DropShadowFilter } from 'pixi-filters';
 import { createClient } from '@supabase/supabase-js';
 import { throttle } from 'lodash';
 import { Clock, Users, Trophy, ChevronLeft, X, Palette, LayoutGrid, Zap, Heart, Image as ImageIcon, Bot, Maximize, Minimize, RotateCcw } from 'lucide-react';
@@ -36,6 +37,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
   const [totalPieces, setTotalPieces] = useState(pieceCount);
   const [playerCount, setPlayerCount] = useState(1);
   const [playTime, setPlayTime] = useState(0);
+  const [isLoading, setIsLoading] = useState(true);
   const [isColorBotLoading, setIsColorBotLoading] = useState(false);
   const [scores, setScores] = useState<{username: string, score: number}[]>([]);
   const [activeUsers, setActiveUsers] = useState<Set<string>>(new Set());
@@ -246,6 +248,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
         let dragStartPieceId = -1;
         
         const targetPositions = new Map<number, {x: number, y: number}>();
+        const fallingPieces: { id: number, container: PIXI.Container, targetX: number, targetY: number, progress: number, delay: number }[] = [];
 
         const updateTouches = (e: TouchEvent) => {
           activeTouches = e.touches.length;
@@ -269,6 +272,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
             selectedCluster.forEach(id => {
               const p = pieces.current.get(id)!;
               p.zIndex = topZIndex;
+              p.filters = [new DropShadowFilter({ offset: { x: 4, y: 4 }, blur: 4, alpha: 0.5, color: 0x000000, quality: 3, resolution: Math.min(window.devicePixelRatio || 1, 2) })];
               selectedOffsets.set(id, { x: localPos.x - p.x, y: localPos.y - p.y });
               targetPositions.delete(id);
             });
@@ -339,6 +343,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
                 selectedCluster.forEach(id => {
                   const p = pieces.current.get(id)!;
                   p.zIndex = 999999;
+                  p.filters = [new DropShadowFilter({ offset: { x: 4, y: 4 }, blur: 4, alpha: 0.5, color: 0x000000, quality: 3, resolution: Math.min(window.devicePixelRatio || 1, 2) })];
                   // Update offset so the piece starts moving smoothly from its current position without jumping
                   selectedOffsets.set(id, { x: currentLocalPos.x - p.x, y: currentLocalPos.y - p.y });
                 });
@@ -389,6 +394,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
                 dragCluster.forEach(id => {
                   const p = pieces.current.get(id)!;
                   p.zIndex = 999999;
+                  p.filters = [new DropShadowFilter({ offset: { x: 4, y: 4 }, blur: 4, alpha: 0.5, color: 0x000000, quality: 3, resolution: Math.min(window.devicePixelRatio || 1, 2) })];
                   p.y -= currentShiftY;
                   updates.push({ pieceId: id, x: p.x, y: p.y });
                 });
@@ -462,6 +468,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
             dragCluster.forEach(id => {
               const p = pieces.current.get(id)!;
               p.zIndex = topZIndex;
+              p.filters = [];
             });
 
             const snapped = snapCluster(dragCluster);
@@ -485,6 +492,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
               selectedCluster.forEach(id => {
                 const p = pieces.current.get(id)!;
                 p.zIndex = topZIndex;
+                p.filters = [];
               });
             }
 
@@ -870,13 +878,52 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
         const boardStartY = 0;
 
         // 화면 중앙에 오도록 world 컨테이너 위치 조정 및 축소 (퍼즐판과 주변 조각이 모두 보이도록)
-        const maxDim = Math.max(boardWidth, boardHeight);
-        const boundingBoxSize = maxDim * 3.5;
-        const initialFitScale = Math.min(app.screen.width / boundingBoxSize, app.screen.height / boundingBoxSize, 1);
+        const spacingX = pieceWidth * 1.6;
+        const spacingY = pieceHeight * 1.6;
+        let placeLayer = 1;
+        let positionsCount = 0;
+        
+        while (positionsCount < PIECE_COUNT) {
+          const minX = -placeLayer * spacingX;
+          const maxX = boardWidth - pieceWidth + placeLayer * spacingX;
+          const minY = 0;
+          const maxY = boardHeight - pieceHeight + placeLayer * spacingY;
+
+          const countX = Math.ceil((maxX - minX) / spacingX);
+          const countY = Math.ceil((maxY - minY) / spacingY);
+
+          const layerCount = (countY + 1) * 2 + (countX - 1);
+          positionsCount += layerCount;
+          
+          if (positionsCount < PIECE_COUNT) {
+            placeLayer++;
+          }
+        }
+        
+        const minX = -placeLayer * spacingX;
+        const maxX = boardWidth + placeLayer * spacingX;
+        const minY = 0;
+        const maxY = boardHeight + placeLayer * spacingY;
+        
+        const contentWidth = maxX - minX;
+        const contentHeight = maxY - minY;
+        
+        // Add some padding
+        const paddingX = Math.max(pieceWidth, pieceHeight) * 1.5;
+        const paddingY = Math.max(pieceWidth, pieceHeight) * 1.5;
+        
+        // Add extra padding at the top for the menu bar (approx 60px)
+        const topMenuHeight = 60;
+        
+        const paddedWidth = contentWidth + paddingX * 2;
+        const paddedHeight = contentHeight + paddingY * 2 + (topMenuHeight / (app.screen.height / contentHeight));
+        
+        const initialFitScale = Math.min(app.screen.width / paddedWidth, app.screen.height / paddedHeight, 1);
         world.scale.set(initialFitScale);
-        world.x = (app.screen.width - boardWidth * initialFitScale) / 2;
-        // Shift the board up slightly since pieces are only placed on the bottom, left, and right
-        world.y = (app.screen.height - boardHeight * initialFitScale) / 3;
+        
+        // Center the content, shifting down slightly to account for the top menu
+        world.x = (app.screen.width - contentWidth * initialFitScale) / 2 - minX * initialFitScale;
+        world.y = (app.screen.height - contentHeight * initialFitScale) / 2 - minY * initialFitScale + (topMenuHeight / 2);
 
         // 퍼즐 판 배경 그리기
         const boardBg = new PIXI.Graphics();
@@ -1643,6 +1690,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
             // Grab piece
             topZIndex++;
             p.zIndex = topZIndex;
+            p.filters = [new DropShadowFilter({ offset: { x: 4, y: 4 }, blur: 4, alpha: 0.5, color: 0x000000, quality: 3, resolution: Math.min(window.devicePixelRatio || 1, 2) })];
             
             // Move cursor and piece to target
             const startX = p.x;
@@ -1689,6 +1737,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
             });
             
             // Drop piece
+            p.filters = [];
             const updates = [{ pieceId: id, x: p.x, y: p.y }];
             sendMoveBatch(updates);
             batchedDbUpdates.push({ piece_index: id, x: p.x, y: p.y, is_locked: false });
@@ -1970,6 +2019,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
 
             topZIndex++;
             p.zIndex = topZIndex;
+            p.filters = [new DropShadowFilter({ offset: { x: 4, y: 4 }, blur: 4, alpha: 0.5, color: 0x000000, quality: 3, resolution: Math.min(window.devicePixelRatio || 1, 2) })];
             
             const distToTarget = Math.hypot(target.x - p.x, target.y - p.y);
             const startX = cursorData!.container.x;
@@ -2017,6 +2067,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
               requestAnimationFrame(animate);
             });
             
+            p.filters = [];
             const updates = [{ pieceId: targetPieceId, x: p.x, y: p.y }];
             sendMoveBatch(updates);
             batchedDbUpdates.push({ piece_index: targetPieceId, x: p.x, y: p.y, is_locked: false });
@@ -2360,9 +2411,6 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
         gatherByColorRef.current = gatherByColor;
         createMosaicFromImageRef.current = createMosaicFromImage;
 
-        const spacingX = pieceWidth * 1.6;
-        const spacingY = pieceHeight * 1.6;
-        
         const { data: existingPieces } = await supabase.from('pixi_pieces').select('*').eq('room_id', roomId);
         const hasExistingState = existingPieces && existingPieces.length > 0;
         const pieceStates = new Map<number, any>();
@@ -2371,7 +2419,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
         }
 
         const initialPositions: {x: number, y: number}[] = [];
-        let placeLayer = 1;
+        placeLayer = 1;
         
         while (initialPositions.length < PIECE_COUNT) {
           const minX = -placeLayer * spacingX;
@@ -2511,6 +2559,33 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
           pieceGraphics.fill({ texture: texture, matrix: matrix, textureSpace: 'global' });
           pieceGraphics.stroke({ width: 2, color: 0x000000, alpha: 0.3 });
 
+          // 입체감을 위한 필터 적용 (Bevel + DropShadow)
+          const filterResolution = Math.min(window.devicePixelRatio || 1, 2);
+          
+          // 외곽선을 미세하게 뭉개어 베벨(입체) 효과가 부드럽게 먹히도록 유도 (계단 현상 제거)
+          const edgeSmoothFilter = new PIXI.BlurFilter({ strength: 0.5, quality: 4 });
+          edgeSmoothFilter.resolution = filterResolution;
+
+          const bevelFilter = new BevelFilter({
+            thickness: 2,
+            lightColor: 0xffffff,
+            lightAlpha: 0.6,
+            shadowColor: 0x000000,
+            shadowAlpha: 0.6,
+          });
+          bevelFilter.resolution = filterResolution;
+          
+          const dropShadowFilter = new DropShadowFilter({
+            offset: { x: 2, y: 2 },
+            blur: 2,
+            alpha: 0.4,
+            color: 0x000000,
+            quality: 3,
+            resolution: filterResolution,
+          });
+          
+          pieceGraphics.filters = [edgeSmoothFilter, bevelFilter, dropShadowFilter];
+
           const highlightGraphics = new PIXI.Graphics();
           highlightGraphics.moveTo(0, 0);
           drawEdge(highlightGraphics, 0, 0, pieceWidth, 0, topTab, tabDepth);
@@ -2521,10 +2596,20 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
           highlightGraphics.stroke({ width: 4, color: 0x00ff00, alpha: 0.8 });
 
           // 렌더링 최적화: 벡터 그래픽을 텍스처로 변환하여 Sprite로 사용
-          const pieceTexture = app.renderer.generateTexture(pieceGraphics);
+          // 메모리 부족(OOM) 방지를 위해 해상도는 기기 해상도(최대 2배)로 제한
+          const textureResolution = Math.min(window.devicePixelRatio || 1, 2);
+          const pieceTexture = app.renderer.generateTexture({
+            target: pieceGraphics,
+            resolution: textureResolution,
+            antialias: true
+          });
           const pieceSprite = new PIXI.Sprite(pieceTexture);
           
-          const highlightTexture = app.renderer.generateTexture(highlightGraphics);
+          const highlightTexture = app.renderer.generateTexture({
+            target: highlightGraphics,
+            resolution: textureResolution,
+            antialias: true
+          });
           const highlightSprite = new PIXI.Sprite(highlightTexture);
           
           const bounds = pieceGraphics.getLocalBounds();
@@ -2548,25 +2633,45 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
 
           // 퍼즐판 바깥에 겹치지 않게 배치
           let state = pieceStates.get(i);
+          let targetX = 0;
+          let targetY = 0;
+          let isLocked = false;
+
           if (hasExistingState && state) {
-            pieceContainer.x = state.x;
-            pieceContainer.y = state.y;
-            if (state.is_locked) {
-              pieceContainer.eventMode = 'none';
-              pieceContainer.zIndex = 0;
-              initialPlacedCount++;
-            } else {
-              pieceContainer.eventMode = 'static';
-              pieceContainer.cursor = 'pointer';
-              pieceContainer.zIndex = 1;
-            }
+            targetX = state.x;
+            targetY = state.y;
+            isLocked = state.is_locked;
           } else {
             const pos = initialPositions[i];
-            pieceContainer.x = pos.x;
-            pieceContainer.y = pos.y;
+            targetX = pos.x;
+            targetY = pos.y;
+          }
+
+          if (isLocked) {
+            pieceContainer.x = targetX;
+            pieceContainer.y = targetY;
+            pieceContainer.eventMode = 'none';
+            pieceContainer.zIndex = 0;
+            initialPlacedCount++;
+          } else {
             pieceContainer.eventMode = 'static';
             pieceContainer.cursor = 'pointer';
             pieceContainer.zIndex = 1;
+            
+            // Set initial falling state
+            pieceContainer.alpha = 0;
+            pieceContainer.scale.set(3);
+            pieceContainer.x = targetX - pieceWidth; // (3-1)/2 = 1, so 1 * pieceWidth
+            pieceContainer.y = targetY - 800 - pieceHeight;
+
+            fallingPieces.push({
+              id: i,
+              container: pieceContainer,
+              targetX,
+              targetY,
+              progress: 0,
+              delay: Math.random() * 40 // 0 to ~0.6 seconds delay
+            });
           }
 
           // 드래그 로직
@@ -2611,6 +2716,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
               dragCluster.forEach(id => {
                 const p = pieces.current.get(id)!;
                 p.zIndex = 999999;
+                p.filters = [new DropShadowFilter({ offset: { x: 4, y: 4 }, blur: 4, alpha: 0.5, color: 0x000000, quality: 3, resolution: Math.min(window.devicePixelRatio || 1, 2) })];
                 updates.push({ pieceId: id, x: p.x, y: p.y });
               });
               sendLockBatch(Array.from(dragCluster));
@@ -2629,6 +2735,57 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
           world.addChild(pieceContainer);
           pieces.current.set(i, pieceContainer);
         }
+
+        if (fallingPieces.length > 0) {
+          const fallTicker = () => {
+            let allDone = true;
+            for (let i = 0; i < fallingPieces.length; i++) {
+              const fp = fallingPieces[i];
+              if (fp.progress >= 1) continue;
+              
+              // If piece is currently being dragged or selected, skip animation and snap to target
+              if ((isDragging && dragCluster.has(fp.id)) || (selectedCluster && selectedCluster.has(fp.id))) {
+                fp.progress = 1;
+                fp.container.scale.set(1);
+                fp.container.alpha = 1;
+                continue;
+              }
+              
+              if (fp.delay > 0) {
+                fp.delay--;
+                allDone = false;
+                continue;
+              }
+              
+              // If remote movement happened while falling, update the fall target
+              if (targetPositions.has(fp.id)) {
+                const target = targetPositions.get(fp.id)!;
+                fp.targetX = target.x;
+                fp.targetY = target.y;
+                targetPositions.delete(fp.id);
+              }
+
+              allDone = false;
+              fp.progress += 0.04; // Animation speed
+              if (fp.progress > 1) fp.progress = 1;
+              
+              // easeOutCubic
+              const ease = 1 - Math.pow(1 - fp.progress, 3);
+              const currentScale = 3 - 2 * ease;
+              
+              fp.container.scale.set(currentScale);
+              fp.container.x = fp.targetX - (pieceWidth * (currentScale - 1)) / 2;
+              fp.container.y = (fp.targetY - 800) + 800 * ease - (pieceHeight * (currentScale - 1)) / 2;
+              fp.container.alpha = Math.min(1, ease * 1.5);
+            }
+            
+            if (allDone) {
+              app.ticker.remove(fallTicker);
+            }
+          };
+          app.ticker.add(fallTicker);
+        }
+
         setPlacedPieces(initialPlacedCount);
 
         if (initialPlacedCount === PIECE_COUNT) {
@@ -2646,6 +2803,8 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
           // Even if not all are marked as locked in DB, check if their positions are correct
           checkCompletion();
         }
+        
+        setIsLoading(false);
 
         // 3. Supabase Realtime 수신
         const channel = supabase.channel(`room_${roomId}`);
@@ -2690,6 +2849,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
                 
                 pieceContainer.alpha = 0.5;
                 pieceContainer.eventMode = 'none';
+                pieceContainer.filters = [new DropShadowFilter({ offset: { x: 4, y: 4 }, blur: 4, alpha: 0.5, color: 0x000000, quality: 3, resolution: Math.min(window.devicePixelRatio || 1, 2) })];
               }
             });
           })
@@ -2698,6 +2858,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
               const pieceContainer = pieces.current.get(id);
               if (pieceContainer) {
                 pieceContainer.alpha = 1;
+                pieceContainer.filters = [];
                 
                 // 완전히 맞춰진 조각이 아니라면 다시 상호작용 가능하게 복구
                 const col = id % GRID_COLS;
@@ -2789,6 +2950,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
 
       } catch (error) {
         console.error('Pixi initialization error:', error);
+        setIsLoading(false);
       }
     };
 
@@ -2886,6 +3048,13 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
 
   return (
     <div className="w-full h-full relative" style={{ backgroundColor: bgColor }}>
+      {isLoading && (
+        <div className="absolute inset-0 z-[100] flex flex-col items-center justify-center bg-slate-900/90 backdrop-blur-sm text-white">
+          <div className="w-16 h-16 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mb-4"></div>
+          <h2 className="text-xl font-bold animate-pulse">Loading Puzzle...</h2>
+          <p className="text-slate-400 mt-2">Preparing pieces and board</p>
+        </div>
+      )}
       <div className="absolute top-0 left-0 w-full z-50 bg-slate-900/80 backdrop-blur-sm border-b border-slate-700/50 p-1.5 sm:p-2 flex flex-col sm:flex-row items-center justify-between gap-1.5 sm:gap-2 text-white shadow-lg">
         {/* Top Row (Mobile) / Left Side (Desktop) */}
         <div className="flex items-center justify-between w-full sm:w-auto gap-1.5 sm:gap-2">

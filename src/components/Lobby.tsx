@@ -209,32 +209,32 @@ const Lobby = ({ onJoinRoom }: { onJoinRoom: (roomId: number, imageUrl: string, 
       <motion.div 
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        className="w-full grid grid-cols-1 gap-8 max-w-7xl lg:grid-cols-3 md:grid-cols-2"
+        className="w-full grid grid-cols-1 gap-5 max-w-7xl lg:grid-cols-3 md:grid-cols-2"
       >
         {/* Left Column: Create/Join Form */}
-        <div className="bg-slate-900 border border-slate-800 rounded-3xl p-8 shadow-2xl text-center h-fit">
-          <div className="w-24 h-24 bg-indigo-500/10 rounded-2xl flex items-center justify-center mx-auto mb-6">
+        <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 shadow-2xl text-center h-fit">
+          <div className="w-24 h-24 bg-indigo-500/10 rounded-2xl flex items-center justify-center mx-auto mb-4">
             <svg width="60" height="60" viewBox="-20 -30 200 200" fill="none" stroke="currentColor" strokeWidth="10" strokeLinecap="round" strokeLinejoin="round" className="text-indigo-400">
               <path d="M25.18,11.87c0,20.95,13.8,42.39,4.85,42.68-8.95.29-11.99-6.96-17.69-6.96s-8.34,4.77-8.34,18.59,2.64,18.59,8.34,18.59,8.74-7.24,17.69-6.96c8.95.29-4.85,21.73-4.85,42.68,20.95,0,42.39,13.8,42.68,4.85.29-8.95-6.96-11.99-6.96-17.69s4.77-8.34,18.59-8.34,18.59,2.64,18.59,8.34-7.24,8.74-6.96,17.69c.29,8.95,21.73-4.85,42.68-4.85,0-20.95-13.8-42.39-4.85-42.68s11.99,6.96,17.69,6.96,8.34-4.77,8.34-18.59-2.64-18.59-8.34-18.59-8.74,7.24-17.69,6.96c-8.95-.29,4.85-21.73,4.85-42.68-20.95,0-42.39-13.8-42.68-4.85s6.96,11.99,6.96,17.69-4.77,8.34-18.59,8.34-18.59-2.64-18.59-8.34,7.24-8.74,6.96-17.69c-.29-8.95-21.73,4.85-42.68,4.85Z"/>
             </svg>
           </div>
           
           <h1 className="text-3xl font-bold text-white mb-2">Web Puzzle</h1>
-          <p className="text-slate-400 mb-8">
+          <p className="text-slate-400 mb-4">
             Create a new puzzle room and invite friends!
           </p>
           
-          <div className="mb-6">
+          <div className="mb-4">
             <input
               type="text"
               placeholder="Enter your name"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              className="w-full bg-slate-950 border border-slate-800 rounded-xl p-4 text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500"
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500"
             />
           </div>
 
-          <div className="space-y-4 mb-8 text-left">
+          <div className="space-y-4 mb-4 text-left">
             <div>
               <label className="block text-sm font-medium text-slate-300 mb-2 flex items-center gap-2">
                 <ImageIcon className="w-4 h-4" /> Image URL
@@ -272,7 +272,7 @@ const Lobby = ({ onJoinRoom }: { onJoinRoom: (roomId: number, imageUrl: string, 
               </p>
             </div>
 
-            <div className="flex gap-4">
+            <div className="flex gap-3">
               <div className="flex-1">
                 <label className="block text-sm font-medium text-slate-300 mb-2 flex items-center gap-2">
                   <Users className="w-4 h-4" /> Max Players
@@ -314,8 +314,8 @@ const Lobby = ({ onJoinRoom }: { onJoinRoom: (roomId: number, imageUrl: string, 
         </div>
 
         {/* Middle Column: Active Rooms Gallery */}
-        <div className="bg-slate-900 border border-slate-800 rounded-3xl p-8 shadow-2xl flex flex-col h-[600px]">
-          <div className="flex items-center justify-between mb-6">
+        <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 shadow-2xl flex flex-col h-[600px]">
+          <div className="flex items-center justify-between mb-4">
             <h2 className="text-xl font-bold text-white flex items-center gap-2">
               <Grid className="w-5 h-5 text-indigo-400" />
               Active Puzzle Rooms
@@ -329,7 +329,7 @@ const Lobby = ({ onJoinRoom }: { onJoinRoom: (roomId: number, imageUrl: string, 
             </button>
           </div>
           
-          <div className="flex-1 overflow-y-auto pr-2 space-y-4 custom-scrollbar">
+          <div className="flex-1 overflow-y-auto pr-2 space-y-3 custom-scrollbar">
             {activeRooms.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center text-slate-500">
                 <ImageIcon className="w-12 h-12 mb-3 opacity-20" />
@@ -397,7 +397,7 @@ const Lobby = ({ onJoinRoom }: { onJoinRoom: (roomId: number, imageUrl: string, 
                       />
                     </div>
                   )}
-                  <div className="p-4 flex items-center justify-between">
+                  <div className="p-3 flex items-center justify-between">
                     <div className="text-left">
                       <p className="text-sm font-medium text-slate-300 flex items-center gap-2">
                         Room #{room.id}
@@ -434,8 +434,8 @@ const Lobby = ({ onJoinRoom }: { onJoinRoom: (roomId: number, imageUrl: string, 
         </div>
 
         {/* Right Column: Completed Rooms Gallery */}
-        <div className="bg-slate-900 border border-slate-800 rounded-3xl p-8 shadow-2xl flex flex-col h-[600px] md:col-span-2 lg:col-span-1">
-          <div className="flex items-center justify-between mb-6">
+        <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 shadow-2xl flex flex-col h-[600px] md:col-span-2 lg:col-span-1">
+          <div className="flex items-center justify-between mb-4">
             <h2 className="text-xl font-bold text-white flex items-center gap-2">
               <Trophy className="w-5 h-5 text-amber-400" />
               Completed Puzzles
@@ -449,7 +449,7 @@ const Lobby = ({ onJoinRoom }: { onJoinRoom: (roomId: number, imageUrl: string, 
                 <p>No completed puzzles yet.</p>
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-1 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-1 gap-3">
                 {completedRooms.map((room) => (
                   <div 
                     key={room.id}
@@ -482,7 +482,7 @@ const Lobby = ({ onJoinRoom }: { onJoinRoom: (roomId: number, imageUrl: string, 
                     <div className="w-full bg-slate-800 h-1.5 overflow-hidden">
                       <div className="bg-amber-500 h-full w-full" />
                     </div>
-                    <div className="p-4 flex items-center justify-between">
+                    <div className="p-3 flex items-center justify-between">
                       <div className="text-left">
                         <p className="text-sm font-medium text-slate-300 flex items-center gap-2">
                           Room #{room.id}
