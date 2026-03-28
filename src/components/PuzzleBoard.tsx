@@ -2527,6 +2527,11 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
 
         let initialPlacedCount = 0;
         for (let i = 0; i < PIECE_COUNT; i++) {
+          // 저사양 기기 최적화: 메인 스레드가 멈추지 않도록 일정 주기마다 비동기 대기(Yield)
+          if (i > 0 && i % 20 === 0) {
+            await new Promise(resolve => setTimeout(resolve, 0));
+          }
+
           const col = i % GRID_COLS;
           const row = Math.floor(i / GRID_COLS);
 
@@ -2552,7 +2557,9 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
           const strokeWidth = Math.max(1.5, pieceWidth * 0.015);
           
           pieceGraphics.fill({ texture: texture, matrix: matrix, textureSpace: 'global' });
-          // 외곽선 제거 요청으로 인해 stroke 부분 삭제
+          // 안티앨리어싱(Anti-aliasing)으로 인해 조각 사이에 생기는 미세한 반투명 틈(Seam)을 메우기 위해,
+          // 검은색 선 대신 '원본 이미지(텍스처)' 자체를 1.5px 두께로 외곽선처럼 그려서 살짝 겹치게 만듭니다.
+          pieceGraphics.stroke({ texture: texture, matrix: matrix, textureSpace: 'global', width: 1.5 });
 
           const highlightGraphics = new PIXI.Graphics();
           highlightGraphics.moveTo(0, 0);
@@ -2564,35 +2571,55 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
           highlightGraphics.stroke({ width: strokeWidth * 2, color: 0x00ff00, alpha: 0.8 });
 
           // 렌더링 최적화: 벡터 그래픽을 텍스처로 변환하여 Sprite로 사용
-          // 퍼즐 조각 텍스처 해상도를 기기 픽셀 밀도에 맞춰 동적으로 설정하여 항상 선명하게 유지
-          const targetResolution = window.devicePixelRatio || 1;
+          // 저사양 기기 최적화: 조각 개수가 많을수록 텍스처 해상도를 낮춰 VRAM 메모리 초과(OOM) 방지
+          let maxRes = 2;
+          if (PIECE_COUNT > 500) maxRes = 1;
+          else if (PIECE_COUNT > 200) maxRes = 1.5;
+          
+          const targetResolution = Math.min(window.devicePixelRatio || 1, maxRes);
+          
+          // 외곽선이 잘리지 않도록 highlightGraphics의 bounds를 기준으로 패딩을 추가하여 프레임 설정
+          const bounds = highlightGraphics.getLocalBounds();
+          const minX = bounds.minX !== undefined ? bounds.minX : bounds.x;
+          const minY = bounds.minY !== undefined ? bounds.minY : bounds.y;
+          const maxX = bounds.maxX !== undefined ? bounds.maxX : bounds.x + bounds.width;
+          const maxY = bounds.maxY !== undefined ? bounds.maxY : bounds.y + bounds.height;
+          
+          const padding = 2;
+          const frame = new PIXI.Rectangle(
+            minX - padding,
+            minY - padding,
+            (maxX - minX) + padding * 2,
+            (maxY - minY) + padding * 2
+          );
           
           const pieceTexture = app.renderer.generateTexture({
             target: pieceGraphics,
-            resolution: targetResolution
+            resolution: targetResolution,
+            frame: frame
           });
           const pieceSprite = new PIXI.Sprite(pieceTexture);
           
           const highlightTexture = app.renderer.generateTexture({
             target: highlightGraphics,
-            resolution: targetResolution
+            resolution: targetResolution,
+            frame: frame
           });
           const highlightSprite = new PIXI.Sprite(highlightTexture);
           
-          const bounds = pieceGraphics.getLocalBounds();
-          const offsetX = bounds.minX !== undefined ? bounds.minX : bounds.x;
-          const offsetY = bounds.minY !== undefined ? bounds.minY : bounds.y;
+          pieceSprite.x = frame.x;
+          pieceSprite.y = frame.y;
           
-          pieceSprite.x = offsetX;
-          pieceSprite.y = offsetY;
-          
-          highlightSprite.x = offsetX;
-          highlightSprite.y = offsetY;
+          highlightSprite.x = frame.x;
+          highlightSprite.y = frame.y;
           highlightSprite.visible = false;
           highlightSprite.name = 'highlight';
 
           pieceContainer.addChild(highlightSprite);
           pieceContainer.addChild(pieceSprite);
+          
+          // 렌더링 최적화: 화면 밖에 있는 조각은 그리지 않도록 설정
+          pieceContainer.cullable = true;
 
           // 메모리 누수 방지를 위해 원본 그래픽 파괴
           pieceGraphics.destroy();
