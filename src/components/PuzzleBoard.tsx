@@ -2607,11 +2607,6 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
           whiteLineGraphics.y = lineOffset;
           whiteLineGraphics.stroke({ width: bevelThickness, color: 0xffffff, alpha: 0.175 });
 
-          // 흰색 라인에 블러(Blur) 효과 적용하여 부드럽게 만들기
-          const blurFilter = new PIXI.BlurFilter();
-          blurFilter.blur = bevelThickness * 3; // 라인 두께의 3배로 블러 강도 조절
-          whiteLineGraphics.filters = [blurFilter];
-
           const blackLineGraphics = new PIXI.Graphics();
           // 위쪽 오른쪽에서 시작하여 오른쪽 변을 타고 내려간 뒤, 아래쪽 변을 타고 왼쪽으로 이동
           blackLineGraphics.moveTo(pieceWidth, 0);
@@ -2622,11 +2617,6 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
           blackLineGraphics.x = -lineOffset;
           blackLineGraphics.y = -lineOffset;
           blackLineGraphics.stroke({ width: bevelThickness, color: 0x000000, alpha: 0.2 });
-
-          // 검은색 라인(그림자)에도 블러(Blur) 효과 적용
-          const blackBlurFilter = new PIXI.BlurFilter();
-          blackBlurFilter.blur = bevelThickness * 3; // 라인 두께의 3배로 블러 강도 조절
-          blackLineGraphics.filters = [blackBlurFilter];
 
           const maskGraphics = new PIXI.Graphics();
           maskGraphics.moveTo(0, 0);
