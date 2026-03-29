@@ -1004,9 +1004,9 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
 
         const updateShadows = () => {
           if (!pieces.current) return;
-          const pieceArray = Array.from(pieces.current.values());
+          const pieceArray = Array.from(pieces.current.values()) as PIXI.Container[];
           
-          pieceArray.forEach(p1 => {
+          pieces.current.forEach((p1, id) => {
             if (p1.eventMode === 'none') {
               const shadow = (p1 as any).shadowSprite;
               if (shadow) shadow.visible = false;
@@ -1015,7 +1015,9 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
             
             // If it's selected or dragged, it already has a shadow
             const highlight = p1.getChildByName('highlight');
-            if (highlight && highlight.visible) {
+            const isBeingDragged = (isDragging && dragCluster && dragCluster.has(id)) || 
+                                   (isDraggingSelected && selectedCluster && selectedCluster.has(id));
+            if ((highlight && highlight.visible) || isBeingDragged) {
               const shadow = (p1 as any).shadowSprite;
               if (shadow) shadow.visible = true;
               return;
@@ -2691,7 +2693,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
           shadowGraphics.fill({ color: 0x000000, alpha: 0.4 });
           const blurFilter = new PIXI.BlurFilter();
           blurFilter.blur = 3;
-          blurFilter.padding = 15;
+          blurFilter.padding = 30;
           shadowGraphics.filters = [blurFilter];
 
           // 렌더링 최적화: 벡터 그래픽을 텍스처로 변환하여 Sprite로 사용
@@ -2709,7 +2711,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
           const maxX = bounds.maxX !== undefined ? bounds.maxX : bounds.x + bounds.width;
           const maxY = bounds.maxY !== undefined ? bounds.maxY : bounds.y + bounds.height;
           
-          const padding = 25;
+          const padding = 40;
           const frame = new PIXI.Rectangle(
             minX - padding,
             minY - padding,
