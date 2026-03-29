@@ -383,7 +383,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
                     const p = pieces.current.get(id)!;
                     const highlight = p.getChildByName('highlight');
                     if (highlight) highlight.visible = false;
-                    const shadow = p.getChildByName('shadow');
+                    const shadow = (p as any).shadowSprite;
                     if (shadow) shadow.visible = false;
                   });
                   selectedCluster = null;
@@ -452,7 +452,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
                 const p = pieces.current.get(id)!;
                 const highlight = p.getChildByName('highlight');
                 if (highlight) highlight.visible = true;
-                const shadow = p.getChildByName('shadow');
+                const shadow = (p as any).shadowSprite;
                 if (shadow) shadow.visible = true;
                 p.zIndex = topZIndex;
               });
@@ -476,7 +476,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
                 const p = pieces.current.get(id)!;
                 const highlight = p.getChildByName('highlight');
                 if (highlight) highlight.visible = false;
-                const shadow = p.getChildByName('shadow');
+                const shadow = (p as any).shadowSprite;
                 if (shadow) shadow.visible = false;
               });
               selectedCluster = null;
@@ -485,7 +485,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
                 const p = pieces.current.get(id)!;
                 const highlight = p.getChildByName('highlight');
                 if (highlight) highlight.visible = false;
-                const shadow = p.getChildByName('shadow');
+                const shadow = (p as any).shadowSprite;
                 if (shadow) shadow.visible = false;
               });
             }
@@ -513,7 +513,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
                   const p = pieces.current.get(id)!;
                   const highlight = p.getChildByName('highlight');
                   if (highlight) highlight.visible = false;
-                  const shadow = p.getChildByName('shadow');
+                  const shadow = (p as any).shadowSprite;
                   if (shadow) shadow.visible = false;
                 });
                 selectedCluster = null;
@@ -534,7 +534,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
                     const p = pieces.current.get(id)!;
                     const highlight = p.getChildByName('highlight');
                     if (highlight) highlight.visible = false;
-                    const shadow = p.getChildByName('shadow');
+                    const shadow = (p as any).shadowSprite;
                     if (shadow) shadow.visible = false;
                   });
                   selectedCluster = null;
@@ -557,7 +557,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
                         const p = pieces.current.get(id)!;
                         const highlight = p.getChildByName('highlight');
                         if (highlight) highlight.visible = true;
-                        const shadow = p.getChildByName('shadow');
+                        const shadow = (p as any).shadowSprite;
                         if (shadow) shadow.visible = true;
                         selectedCluster!.add(id);
                       });
@@ -1008,7 +1008,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
           
           pieceArray.forEach(p1 => {
             if (p1.eventMode === 'none') {
-              const shadow = p1.getChildByName('shadow');
+              const shadow = (p1 as any).shadowSprite;
               if (shadow) shadow.visible = false;
               return;
             }
@@ -1016,7 +1016,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
             // If it's selected or dragged, it already has a shadow
             const highlight = p1.getChildByName('highlight');
             if (highlight && highlight.visible) {
-              const shadow = p1.getChildByName('shadow');
+              const shadow = (p1 as any).shadowSprite;
               if (shadow) shadow.visible = true;
               return;
             }
@@ -1039,7 +1039,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
               }
             }
             
-            const shadow = p1.getChildByName('shadow');
+            const shadow = (p1 as any).shadowSprite;
             if (shadow) shadow.visible = overlaps;
           });
         };
@@ -1423,7 +1423,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
               p.zIndex = 0;
               const highlight = p.getChildByName('highlight');
               if (highlight) highlight.visible = false;
-              const shadow = p.getChildByName('shadow');
+              const shadow = (p as any).shadowSprite;
               if (shadow) shadow.visible = false;
               isLocked = true;
             }
@@ -1454,7 +1454,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
             const p = pieces.current.get(id)!;
             const highlight = p.getChildByName('highlight');
             if (highlight) highlight.visible = false;
-            const shadow = p.getChildByName('shadow');
+            const shadow = (p as any).shadowSprite;
             if (shadow) shadow.visible = false;
           });
 
@@ -2691,6 +2691,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
           shadowGraphics.fill({ color: 0x000000, alpha: 0.4 });
           const blurFilter = new PIXI.BlurFilter();
           blurFilter.blur = 3;
+          blurFilter.padding = 15;
           shadowGraphics.filters = [blurFilter];
 
           // 렌더링 최적화: 벡터 그래픽을 텍스처로 변환하여 Sprite로 사용
@@ -2708,7 +2709,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
           const maxX = bounds.maxX !== undefined ? bounds.maxX : bounds.x + bounds.width;
           const maxY = bounds.maxY !== undefined ? bounds.maxY : bounds.y + bounds.height;
           
-          const padding = 15;
+          const padding = 25;
           const frame = new PIXI.Rectangle(
             minX - padding,
             minY - padding,
@@ -2745,12 +2746,13 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
           highlightSprite.visible = false;
           highlightSprite.name = 'highlight';
 
-          shadowSprite.x = frame.x + 5;
-          shadowSprite.y = frame.y + 5;
           shadowSprite.visible = false;
           shadowSprite.name = 'shadow';
+          (shadowSprite as any).offsetX = frame.x + 5;
+          (shadowSprite as any).offsetY = frame.y + 5;
+          (pieceContainer as any).shadowSprite = shadowSprite;
+          world.addChild(shadowSprite);
 
-          pieceContainer.addChild(shadowSprite);
           pieceContainer.addChild(highlightSprite);
           pieceContainer.addChild(pieceSprite);
           
@@ -2842,7 +2844,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
               dragOffsets.set(id, { x: localPos.x - p.x, y: localPos.y - p.y });
               targetPositions.delete(id);
               
-              const shadow = p.getChildByName('shadow');
+              const shadow = (p as any).shadowSprite;
               if (shadow) shadow.visible = true;
             });
             currentShiftY = 0;
@@ -2872,6 +2874,23 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
           world.addChild(pieceContainer);
           pieces.current.set(i, pieceContainer);
         }
+
+        const syncShadowsTicker = () => {
+          pieces.current.forEach((p) => {
+            const shadow = (p as any).shadowSprite;
+            if (shadow && shadow.visible) {
+              if (p.x !== (p as any).lastX || p.y !== (p as any).lastY || p.zIndex !== (p as any).lastZIndex) {
+                shadow.x = p.x + shadow.offsetX;
+                shadow.y = p.y + shadow.offsetY;
+                shadow.zIndex = p.zIndex - 1;
+                (p as any).lastX = p.x;
+                (p as any).lastY = p.y;
+                (p as any).lastZIndex = p.zIndex;
+              }
+            }
+          });
+        };
+        app.ticker.add(syncShadowsTicker);
 
         if (fallingPieces.length > 0) {
           const fallTicker = () => {
