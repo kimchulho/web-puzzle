@@ -21,6 +21,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
   const channelRef = useRef<any>(null);
   const socketRef = useRef<Socket | null>(null);
   const textureAliasRef = useRef<string | null>(null);
+  const objectUrlRef = useRef<string | null>(null);
   const gatherBordersRef = useRef<(() => void) | null>(null);
   const gatherByColorRef = useRef<((quick?: boolean) => void) | null>(null);
   const createMosaicFromImageRef = useRef<((imageUrl: string, quick?: boolean, gapMultiplier?: number) => void) | null>(null);
@@ -836,28 +837,55 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
         canvas.addEventListener('touchcancel', updateTouches, { passive: false });
 
         // 2. 이미지 로드 및 조각 생성
+        let objectUrl = '';
+        try {
+          const response = await fetch(imageUrl, { mode: 'cors' });
+          if (!response.ok) throw new Error('Network response was not ok');
+          const blob = await response.blob();
+          objectUrl = URL.createObjectURL(blob);
+        } catch (e) {
+          console.error('Error fetching image directly, trying proxy:', e);
+          try {
+            const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(imageUrl)}`;
+            const response = await fetch(proxyUrl, { mode: 'cors' });
+            if (!response.ok) throw new Error('Proxy network response was not ok');
+            const blob = await response.blob();
+            objectUrl = URL.createObjectURL(blob);
+          } catch (e2) {
+            console.error('Error fetching image via proxy:', e2);
+          }
+        }
+
+        if (!isMounted) return;
+        if (!objectUrl) {
+          console.error('Failed to load texture');
+          setIsLoading(false);
+          return;
+        }
+        
+        objectUrlRef.current = objectUrl;
         const alias = `puzzleImage_${roomId}_${Date.now()}_${Math.random().toString(36).substring(7)}`;
         textureAliasRef.current = alias;
         
         let texture;
         try {
-          PIXI.Assets.add({ alias, src: imageUrl, data: { crossOrigin: 'anonymous' } });
+          PIXI.Assets.add({ alias, src: objectUrl });
           texture = await PIXI.Assets.load(alias);
         } catch (e) {
-          console.error('Error loading texture:', e);
+          console.error('Error loading texture into PIXI:', e);
         }
         
         if (!isMounted) return;
         if (!texture) {
           console.error('Failed to load texture');
+          setIsLoading(false);
           return;
         }
 
         // Calculate optimal background color based on image brightness
         try {
           const img = new Image();
-          img.crossOrigin = 'anonymous';
-          img.src = imageUrl;
+          img.src = objectUrl;
           await new Promise((resolve, reject) => {
             img.onload = resolve;
             img.onerror = reject;
@@ -1822,8 +1850,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
           if (!ctx) return null;
 
           const img = new Image();
-          img.crossOrigin = 'anonymous';
-          img.src = imageUrl;
+          img.src = objectUrlRef.current || imageUrl;
           try {
             await new Promise((resolve, reject) => {
               img.onload = resolve;
@@ -2216,8 +2243,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
 
           try {
             const img = new Image();
-            img.crossOrigin = "Anonymous";
-            img.src = imageUrl;
+            img.src = objectUrlRef.current || imageUrl;
             
             await new Promise((resolve, reject) => {
               img.onload = resolve;
@@ -3063,6 +3089,10 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
         PIXI.Assets.unload(textureAliasRef.current).catch(() => {});
         textureAliasRef.current = null;
       }
+      if (objectUrlRef.current) {
+        URL.revokeObjectURL(objectUrlRef.current);
+        objectUrlRef.current = null;
+      }
     };
   }, [imageUrl]);
 
@@ -3501,7 +3531,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
           onPointerCancel={handleMiniPadPointerUp}
           title="Drag to pan, Click to view full image"
         >
-          <img src={imageUrl} alt="Puzzle Thumbnail" className="w-24 sm:w-32 h-auto rounded-lg opacity-90 hover:opacity-100 transition-opacity pointer-events-none object-cover" />
+          <img src={objectUrlRef.current || imageUrl} alt="Puzzle Thumbnail" className="w-24 sm:w-32 h-auto rounded-lg opacity-90 hover:opacity-100 transition-opacity pointer-events-none object-cover" />
         </div>
       </div>
 
@@ -3519,7 +3549,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
               <X size={20} className="sm:w-6 sm:h-6" />
             </button>
             <img 
-              src={imageUrl} 
+              src={objectUrlRef.current || imageUrl} 
               alt="Full Puzzle" 
               className="max-w-full max-h-[90vh] object-contain rounded-lg" 
               onClick={(e) => e.stopPropagation()}
