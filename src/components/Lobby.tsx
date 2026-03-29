@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Trophy, Grid3X3, RefreshCw, Users, Lock, Image as ImageIcon, Play, Plus, Grid, Clock } from 'lucide-react';
+import { Trophy, Grid3X3, RefreshCw, Users, Lock, Image as ImageIcon, Play, Plus, Grid, Clock, Maximize, Minimize, RotateCcw } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
 import { motion } from 'motion/react';
 
@@ -31,6 +31,48 @@ const Lobby = ({ onJoinRoom }: { onJoinRoom: (roomId: number, imageUrl: string, 
   const [maxPlayers, setMaxPlayers] = useState<number>(8);
   const [password, setPassword] = useState<string>('');
   const [isCreating, setIsCreating] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+  }, []);
+
+  const toggleFullscreen = async () => {
+    try {
+      if (!document.fullscreenElement) {
+        await document.documentElement.requestFullscreen();
+      } else {
+        await document.exitFullscreen();
+      }
+    } catch (err) {
+      console.error("Error attempting to toggle fullscreen:", err);
+    }
+  };
+
+  const toggleOrientation = async () => {
+    try {
+      if (!document.fullscreenElement) {
+        await document.documentElement.requestFullscreen();
+      }
+      
+      if (window.screen && window.screen.orientation && (window.screen.orientation as any).lock) {
+        const currentType = window.screen.orientation.type;
+        if (currentType.startsWith('portrait')) {
+          await (window.screen.orientation as any).lock('landscape');
+        } else {
+          await (window.screen.orientation as any).lock('portrait');
+        }
+      } else {
+        console.warn("Screen orientation lock is not supported on this device/browser.");
+      }
+    } catch (err) {
+      console.error("Error attempting to lock orientation:", err);
+    }
+  };
 
   useEffect(() => {
     localStorage.setItem('puzzle_username', username);
@@ -205,7 +247,34 @@ const Lobby = ({ onJoinRoom }: { onJoinRoom: (roomId: number, imageUrl: string, 
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 flex flex-col items-center py-12 px-4 overflow-y-auto">
+    <div className="min-h-screen relative bg-slate-950 flex flex-col items-center pt-20 pb-12 px-4 overflow-y-auto">
+      {/* Top Menu Bar */}
+      <div className="fixed top-0 left-0 w-full z-50 bg-slate-900/80 backdrop-blur-sm border-b border-slate-700/50 p-2 sm:p-3 flex items-center justify-between text-white">
+        <div className="flex items-center gap-2">
+          <div className="flex items-center justify-center bg-indigo-500/10 w-8 h-8 sm:w-9 sm:h-9 rounded-lg border border-indigo-500/20 shrink-0">
+            <Grid3X3 size={18} className="text-indigo-400" />
+          </div>
+          <span className="font-bold text-sm sm:text-base">Web Puzzle</span>
+        </div>
+        <div className="flex items-center gap-1.5 sm:gap-2">
+          <button 
+            onClick={toggleOrientation}
+            className="flex lg:hidden items-center justify-center w-8 h-8 sm:w-9 sm:h-9 bg-slate-800/50 hover:bg-slate-700 rounded-lg transition-colors border border-slate-700/50 text-slate-400 hover:text-white shrink-0"
+            title="Rotate Screen"
+          >
+            <RotateCcw size={18} />
+          </button>
+
+          <button 
+            onClick={toggleFullscreen}
+            className="flex items-center justify-center w-8 h-8 sm:w-9 sm:h-9 bg-slate-800/50 hover:bg-slate-700 rounded-lg transition-colors border border-slate-700/50 text-slate-400 hover:text-white shrink-0"
+            title={isFullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}
+          >
+            {isFullscreen ? <Minimize size={18} /> : <Maximize size={18} />}
+          </button>
+        </div>
+      </div>
+
       <motion.div 
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
