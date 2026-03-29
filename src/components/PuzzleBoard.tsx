@@ -20,7 +20,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
   const pieces = useRef<Map<number, PIXI.Container>>(new Map());
   const channelRef = useRef<any>(null);
   const socketRef = useRef<Socket | null>(null);
-  const textureAliasRef = useRef<string | null>(null);
+  const mainTextureRef = useRef<PIXI.Texture | null>(null);
   const objectUrlRef = useRef<string | null>(null);
   const gatherBordersRef = useRef<(() => void) | null>(null);
   const gatherByColorRef = useRef<((quick?: boolean) => void) | null>(null);
@@ -838,39 +838,71 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
 
         // 2. 이미지 로드 및 조각 생성
         let objectUrl = '';
-        try {
-          const response = await fetch(imageUrl, { mode: 'cors' });
-          if (!response.ok) throw new Error('Network response was not ok');
+        let img: HTMLImageElement | null = null;
+        
+        const tryLoadImage = async (url: string): Promise<{ objectUrl: string, img: HTMLImageElement }> => {
+          const response = await fetch(url, { mode: 'cors' });
+          if (!response.ok) throw new Error(`Network response was not ok: ${response.status}`);
           const blob = await response.blob();
-          objectUrl = URL.createObjectURL(blob);
+          if (!blob.type.startsWith('image/')) {
+            console.warn(`Response type is ${blob.type}, attempting to load anyway...`);
+          }
+          const objUrl = URL.createObjectURL(blob);
+          
+          const testImg = new Image();
+          testImg.src = objUrl;
+          await new Promise((resolve, reject) => {
+            testImg.onload = resolve;
+            testImg.onerror = () => reject(new Error('Image failed to load from object URL'));
+          });
+          return { objectUrl: objUrl, img: testImg };
+        };
+
+        try {
+          const result = await tryLoadImage(imageUrl);
+          objectUrl = result.objectUrl;
+          img = result.img;
         } catch (e) {
-          console.error('Error fetching image directly, trying proxy:', e);
+          console.error('Error fetching image directly, trying proxy 1:', e);
           try {
-            const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(imageUrl)}`;
-            const response = await fetch(proxyUrl, { mode: 'cors' });
-            if (!response.ok) throw new Error('Proxy network response was not ok');
-            const blob = await response.blob();
-            objectUrl = URL.createObjectURL(blob);
+            const proxyUrl = `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(imageUrl)}`;
+            const result = await tryLoadImage(proxyUrl);
+            objectUrl = result.objectUrl;
+            img = result.img;
           } catch (e2) {
-            console.error('Error fetching image via proxy:', e2);
+            console.error('Error fetching image via codetabs, trying proxy 2:', e2);
+            try {
+              const proxyUrl2 = `https://api.allorigins.win/raw?url=${encodeURIComponent(imageUrl)}`;
+              const result = await tryLoadImage(proxyUrl2);
+              objectUrl = result.objectUrl;
+              img = result.img;
+            } catch (e3) {
+              console.error('Error fetching image via allorigins, trying proxy 3:', e3);
+              try {
+                const proxyUrl3 = `https://corsproxy.io/?${encodeURIComponent(imageUrl)}`;
+                const result = await tryLoadImage(proxyUrl3);
+                objectUrl = result.objectUrl;
+                img = result.img;
+              } catch (e4) {
+                console.error('Error fetching image via corsproxy.io:', e4);
+              }
+            }
           }
         }
 
         if (!isMounted) return;
-        if (!objectUrl) {
+        if (!objectUrl || !img) {
           console.error('Failed to load texture');
           setIsLoading(false);
           return;
         }
         
         objectUrlRef.current = objectUrl;
-        const alias = `puzzleImage_${roomId}_${Date.now()}_${Math.random().toString(36).substring(7)}`;
-        textureAliasRef.current = alias;
         
         let texture;
         try {
-          PIXI.Assets.add({ alias, src: objectUrl });
-          texture = await PIXI.Assets.load(alias);
+          texture = PIXI.Texture.from(img);
+          mainTextureRef.current = texture;
         } catch (e) {
           console.error('Error loading texture into PIXI:', e);
         }
@@ -884,12 +916,6 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
 
         // Calculate optimal background color based on image brightness
         try {
-          const img = new Image();
-          img.src = objectUrl;
-          await new Promise((resolve, reject) => {
-            img.onload = resolve;
-            img.onerror = reject;
-          });
           const colorCanvas = document.createElement('canvas');
           colorCanvas.width = 50;
           colorCanvas.height = 50;
@@ -2221,7 +2247,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
           await executeBotMoves(botTargets, quick);
         };
 
-        const createMosaicFromImage = async (imageUrl: string, quick: boolean = false, gapMultiplier: number = 1.6) => {
+        const createMosaicFromImage = async (targetImageUrl: string, quick: boolean = false, gapMultiplier: number = 1.6) => {
           if (isColorBotRunningRef.current) {
             isColorBotRunningRef.current = false;
             return;
@@ -2241,16 +2267,62 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
 
           if (!isColorBotRunningRef.current) return;
 
+          let tempObjectUrl = '';
           try {
-            const img = new Image();
-            img.src = objectUrlRef.current || imageUrl;
+            let img: HTMLImageElement | null = null;
             
-            await new Promise((resolve, reject) => {
-              img.onload = resolve;
-              img.onerror = reject;
-            });
+            const tryLoadMosaicImage = async (url: string): Promise<{ objectUrl: string, img: HTMLImageElement }> => {
+              const response = await fetch(url, { mode: 'cors' });
+              if (!response.ok) throw new Error(`Network response was not ok: ${response.status}`);
+              const blob = await response.blob();
+              const objUrl = URL.createObjectURL(blob);
+              
+              const testImg = new Image();
+              testImg.src = objUrl;
+              await new Promise((resolve, reject) => {
+                testImg.onload = resolve;
+                testImg.onerror = () => reject(new Error('Image failed to load from object URL'));
+              });
+              return { objectUrl: objUrl, img: testImg };
+            };
 
-            if (!isColorBotRunningRef.current) return;
+            try {
+              const result = await tryLoadMosaicImage(targetImageUrl);
+              tempObjectUrl = result.objectUrl;
+              img = result.img;
+            } catch (e) {
+              console.error('Error fetching mosaic image directly, trying proxy 1:', e);
+              try {
+                const proxyUrl = `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetImageUrl)}`;
+                const result = await tryLoadMosaicImage(proxyUrl);
+                tempObjectUrl = result.objectUrl;
+                img = result.img;
+              } catch (e2) {
+                console.error('Error fetching mosaic image via codetabs, trying proxy 2:', e2);
+                try {
+                  const proxyUrl2 = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetImageUrl)}`;
+                  const result = await tryLoadMosaicImage(proxyUrl2);
+                  tempObjectUrl = result.objectUrl;
+                  img = result.img;
+                } catch (e3) {
+                  console.error('Error fetching mosaic image via allorigins, trying proxy 3:', e3);
+                  try {
+                    const proxyUrl3 = `https://corsproxy.io/?${encodeURIComponent(targetImageUrl)}`;
+                    const result = await tryLoadMosaicImage(proxyUrl3);
+                    tempObjectUrl = result.objectUrl;
+                    img = result.img;
+                  } catch (e4) {
+                    console.error('Error fetching mosaic image via corsproxy.io:', e4);
+                    throw e4;
+                  }
+                }
+              }
+            }
+
+            if (!isColorBotRunningRef.current) {
+              if (tempObjectUrl) URL.revokeObjectURL(tempObjectUrl);
+              return;
+            }
 
             const imgW = img.width;
             const imgH = img.height;
@@ -2452,11 +2524,13 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
             }
 
             setIsColorBotLoading(false);
+            if (tempObjectUrl) URL.revokeObjectURL(tempObjectUrl);
             await executeBotMoves(botTargets, quick);
           } catch (error) {
             console.error("Failed to load image for mosaic:", error);
             setIsColorBotLoading(false);
             isColorBotRunningRef.current = false;
+            if (tempObjectUrl) URL.revokeObjectURL(tempObjectUrl);
             // We can't use alert in iframe, so we'll just log it.
           }
         };
@@ -3085,9 +3159,9 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
       if (channelRef.current) {
         channelRef.current.unsubscribe();
       }
-      if (textureAliasRef.current) {
-        PIXI.Assets.unload(textureAliasRef.current).catch(() => {});
-        textureAliasRef.current = null;
+      if (mainTextureRef.current) {
+        mainTextureRef.current.destroy(true);
+        mainTextureRef.current = null;
       }
       if (objectUrlRef.current) {
         URL.revokeObjectURL(objectUrlRef.current);
