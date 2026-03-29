@@ -384,8 +384,6 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
                     const p = pieces.current.get(id)!;
                     const lockIcon = p.getChildByName('lockIcon');
                     if (lockIcon) lockIcon.visible = false;
-                    const shadow = (p as any).shadowSprite;
-                    if (shadow) shadow.visible = false;
                   });
                   selectedCluster = null;
                 }
@@ -453,8 +451,6 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
                 const p = pieces.current.get(id)!;
                 const lockIcon = p.getChildByName('lockIcon');
                 if (lockIcon) lockIcon.visible = true;
-                const shadow = (p as any).shadowSprite;
-                if (shadow) shadow.visible = false;
                 p.zIndex = topZIndex;
               });
               
@@ -477,8 +473,6 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
                 const p = pieces.current.get(id)!;
                 const lockIcon = p.getChildByName('lockIcon');
                 if (lockIcon) lockIcon.visible = false;
-                const shadow = (p as any).shadowSprite;
-                if (shadow) shadow.visible = false;
               });
               selectedCluster = null;
             } else if (!selectedCluster || !dragCluster.has(Array.from(selectedCluster)[0])) {
@@ -486,12 +480,9 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
                 const p = pieces.current.get(id)!;
                 const lockIcon = p.getChildByName('lockIcon');
                 if (lockIcon) lockIcon.visible = false;
-                const shadow = (p as any).shadowSprite;
-                if (shadow) shadow.visible = false;
               });
             }
             currentShiftY = 0;
-            updateShadows();
             return;
           }
 
@@ -514,11 +505,8 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
                   const p = pieces.current.get(id)!;
                   const lockIcon = p.getChildByName('lockIcon');
                   if (lockIcon) lockIcon.visible = false;
-                  const shadow = (p as any).shadowSprite;
-                  if (shadow) shadow.visible = false;
                 });
                 selectedCluster = null;
-                updateShadows();
               }
             } else {
               // Drag ended -> snap but KEEP selected
@@ -535,11 +523,8 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
                     const p = pieces.current.get(id)!;
                     const lockIcon = p.getChildByName('lockIcon');
                     if (lockIcon) lockIcon.visible = false;
-                    const shadow = (p as any).shadowSprite;
-                    if (shadow) shadow.visible = false;
                   });
                   selectedCluster = null;
-                  updateShadows();
                 } else if (snapped) {
                   // Re-evaluate the cluster to see if it grew
                   const firstId = Array.from(selectedCluster)[0];
@@ -558,8 +543,6 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
                         const p = pieces.current.get(id)!;
                         const lockIcon = p.getChildByName('lockIcon');
                         if (lockIcon) lockIcon.visible = true;
-                        const shadow = (p as any).shadowSprite;
-                        if (shadow) shadow.visible = false;
                         selectedCluster!.add(id);
                       });
                     }
@@ -621,7 +604,6 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
                 p.y = target.y;
                 targetPositions.delete(id);
                 checkCompletion();
-                updateShadows();
               } else {
                 p.x += dx * 0.3;
                 p.y += dy * 0.3;
@@ -637,7 +619,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
           if (isDragging && !isTouchDraggingPiece) return;
           
           const edgeMargin = 20;
-          const scrollSpeed = 10;
+          const scrollSpeed = 2.5;
           let scrollX = 0;
           let scrollY = 0;
           
@@ -1026,54 +1008,6 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
           drawC(p(0.627, 0.195), p(0.671, 0.171), p(0.671, 0.118));
           drawC(p(0.671, 0.066), p(0.604, 0.038), p(0.607, -0.045));
           drawC(p(0.610, -0.127), p(0.807, 0), p(1.000, 0));
-        };
-
-        const updateShadows = () => {
-          if (!pieces.current) return;
-          const pieceArray = Array.from(pieces.current.values()) as PIXI.Container[];
-          
-          pieces.current.forEach((p1, id) => {
-            if (p1.eventMode === 'none') {
-              const shadow = (p1 as any).shadowSprite;
-              if (shadow) shadow.visible = false;
-              return;
-            }
-            
-            // If it's selected or dragged, it already has a shadow
-            const lockIcon = p1.getChildByName('lockIcon');
-            const isBeingDragged = (isDragging && dragCluster && dragCluster.has(id)) || 
-                                   (isDraggingSelected && selectedCluster && selectedCluster.has(id));
-            if (isBeingDragged) {
-              const shadow = (p1 as any).shadowSprite;
-              if (shadow) shadow.visible = true;
-              return;
-            } else if (lockIcon && lockIcon.visible) {
-              const shadow = (p1 as any).shadowSprite;
-              if (shadow) shadow.visible = false;
-              return;
-            }
-
-            let overlaps = false;
-            for (let i = 0; i < pieceArray.length; i++) {
-              const p2 = pieceArray[i];
-              if (p1 === p2) continue;
-              
-              const dx = p1.x - p2.x;
-              const dy = p1.y - p2.y;
-              // Simple bounding circle overlap check (using 70% of piece size to avoid edge cases)
-              const minSize = Math.min(pieceWidth, pieceHeight);
-              const threshold = (minSize * 0.7) * (minSize * 0.7);
-              if (dx * dx + dy * dy < threshold) {
-                if (p1.zIndex > p2.zIndex) {
-                  overlaps = true;
-                  break;
-                }
-              }
-            }
-            
-            const shadow = (p1 as any).shadowSprite;
-            if (shadow) shadow.visible = overlaps;
-          });
         };
 
         const sendMoveBatch = throttle((updates: {pieceId: number, x: number, y: number}[]) => {
@@ -1465,8 +1399,6 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
               p.zIndex = 0;
               const lockIcon = p.getChildByName('lockIcon');
               if (lockIcon) lockIcon.visible = false;
-              const shadow = (p as any).shadowSprite;
-              if (shadow) shadow.visible = false;
               isLocked = true;
             }
             dbUpdates.push({ piece_index: id, x: p.x, y: p.y, is_locked: isLocked });
@@ -1496,15 +1428,12 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
             const p = pieces.current.get(id)!;
             const lockIcon = p.getChildByName('lockIcon');
             if (lockIcon) lockIcon.visible = false;
-            const shadow = (p as any).shadowSprite;
-            if (shadow) shadow.visible = false;
           });
 
           snapCluster(selectedCluster);
           
           selectedCluster = null;
           isDraggingSelected = false;
-          updateShadows();
         };
 
         const gatherBorders = async () => {
@@ -2701,14 +2630,6 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
           lockIconGraphics.fill({ color: 0xffffff, alpha: 0.8 });
           lockIconGraphics.roundRect(-6, -16, 12, 10, 4);
           lockIconGraphics.stroke({ width: 3, color: 0xffffff, alpha: 0.8 });
-          
-          const shadowGraphics = new PIXI.Graphics();
-          applyPieceShape(shadowGraphics);
-          shadowGraphics.fill({ color: 0x000000, alpha: 0.4 });
-          const blurFilter = new PIXI.BlurFilter();
-          blurFilter.blur = 3;
-          blurFilter.padding = 30;
-          shadowGraphics.filters = [blurFilter];
 
           // 렌더링 최적화: 벡터 그래픽을 텍스처로 변환하여 Sprite로 사용
           // 저사양 기기 최적화: 조각 개수가 많을수록 텍스처 해상도를 낮춰 VRAM 메모리 초과(OOM) 방지
@@ -2745,13 +2666,6 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
             resolution: targetResolution,
           });
           const lockIconSprite = new PIXI.Sprite(lockIconTexture);
-
-          const shadowTexture = app.renderer.generateTexture({
-            target: shadowGraphics,
-            resolution: targetResolution,
-            frame: frame
-          });
-          const shadowSprite = new PIXI.Sprite(shadowTexture);
           
           pieceSprite.x = frame.x;
           pieceSprite.y = frame.y;
@@ -2762,15 +2676,8 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
           lockIconSprite.visible = false;
           lockIconSprite.name = 'lockIcon';
 
-          shadowSprite.visible = false;
-          shadowSprite.name = 'shadow';
-          (shadowSprite as any).offsetX = frame.x + 5;
-          (shadowSprite as any).offsetY = frame.y + 5;
-          (pieceContainer as any).shadowSprite = shadowSprite;
-          world.addChild(shadowSprite);
-
-          pieceContainer.addChild(lockIconSprite);
           pieceContainer.addChild(pieceSprite);
+          pieceContainer.addChild(lockIconSprite);
           
           // 렌더링 최적화: 화면 밖에 있는 조각은 그리지 않도록 설정
           pieceContainer.cullable = true;
@@ -2782,7 +2689,6 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
             pieceGraphics.destroy();
           }
           lockIconGraphics.destroy();
-          shadowGraphics.destroy();
 
           // 퍼즐판 바깥에 겹치지 않게 배치
           let state = pieceStates.get(i);
@@ -2859,9 +2765,6 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
               const p = pieces.current.get(id)!;
               dragOffsets.set(id, { x: localPos.x - p.x, y: localPos.y - p.y });
               targetPositions.delete(id);
-              
-              const shadow = (p as any).shadowSprite;
-              if (shadow) shadow.visible = true;
             });
             currentShiftY = 0;
             
@@ -2890,23 +2793,6 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
           world.addChild(pieceContainer);
           pieces.current.set(i, pieceContainer);
         }
-
-        const syncShadowsTicker = () => {
-          pieces.current.forEach((p) => {
-            const shadow = (p as any).shadowSprite;
-            if (shadow && shadow.visible) {
-              if (p.x !== (p as any).lastX || p.y !== (p as any).lastY || p.zIndex !== (p as any).lastZIndex) {
-                shadow.x = p.x + shadow.offsetX;
-                shadow.y = p.y + shadow.offsetY;
-                shadow.zIndex = p.zIndex - 1;
-                (p as any).lastX = p.x;
-                (p as any).lastY = p.y;
-                (p as any).lastZIndex = p.zIndex;
-              }
-            }
-          });
-        };
-        app.ticker.add(syncShadowsTicker);
 
         if (fallingPieces.length > 0) {
           const fallTicker = () => {
@@ -2953,12 +2839,9 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
             
             if (allDone) {
               app.ticker.remove(fallTicker);
-              updateShadows();
             }
           };
           app.ticker.add(fallTicker);
-        } else {
-          updateShadows();
         }
 
         setPlacedPieces(initialPlacedCount);
@@ -3035,7 +2918,6 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
                 pieceContainer.eventMode = 'none';
               }
             });
-            updateShadows();
           })
           .on('broadcast', { event: 'unlock' }, ({ payload }) => {
             const userId = payload.userId;
@@ -3060,7 +2942,6 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
                 }
               }
             });
-            updateShadows();
           })
           .on('broadcast', { event: 'scoreUpdate' }, ({ payload }) => {
             setScores(prev => {
@@ -3246,7 +3127,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
           <p className="text-slate-400 mt-2">Preparing pieces and board</p>
         </div>
       )}
-      <div className="absolute top-0 left-0 w-full z-50 bg-slate-900/80 backdrop-blur-sm border-b border-slate-700/50 p-1.5 sm:p-2 flex flex-col sm:flex-row items-center justify-between gap-1.5 sm:gap-2 text-white shadow-lg">
+      <div className="absolute top-0 left-0 w-full z-50 bg-slate-900/80 backdrop-blur-sm border-b border-slate-700/50 p-1.5 sm:p-2 flex flex-col sm:flex-row items-center justify-between gap-1.5 sm:gap-2 text-white">
         {/* Top Row (Mobile) / Left Side (Desktop) */}
         <div className="flex items-center justify-between w-full sm:w-auto gap-1.5 sm:gap-2">
           <button 
@@ -3303,7 +3184,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
             </button>
             
             {showBotMenu && (
-              <div className="absolute top-full mt-2 right-0 bg-slate-800 border border-slate-700 rounded-xl shadow-2xl p-3 z-50 animate-in fade-in slide-in-from-top-2 w-48">
+              <div className="absolute top-full mt-2 right-0 bg-slate-800 border border-slate-700 rounded-xl p-3 z-50 animate-in fade-in slide-in-from-top-2 w-48">
                 <div className="flex items-center justify-between mb-3 border-b border-slate-700 pb-2">
                   <span className="text-xs font-bold text-slate-300 uppercase tracking-wider">Bot Actions</span>
                   <button onClick={() => setShowBotMenu(false)} className="text-slate-500 hover:text-white">
@@ -3384,11 +3265,11 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
               title="Change Background Color"
             >
               <Palette size={16} />
-              <div className="w-3.5 h-3.5 rounded-full border border-slate-600 shadow-sm" style={{ backgroundColor: bgColor }} />
+              <div className="w-3.5 h-3.5 rounded-full border border-slate-600" style={{ backgroundColor: bgColor }} />
             </button>
             
             {showColorPicker && (
-              <div className="absolute top-full mt-2 right-0 bg-slate-800 border border-slate-700 rounded-xl shadow-2xl p-3 z-50 animate-in fade-in slide-in-from-top-2 w-[140px]">
+              <div className="absolute top-full mt-2 right-0 bg-slate-800 border border-slate-700 rounded-xl p-3 z-50 animate-in fade-in slide-in-from-top-2 w-[140px]">
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-xs font-medium text-slate-300">Background</span>
                   <button onClick={() => setShowColorPicker(false)} className="text-slate-500 hover:text-white">
@@ -3452,7 +3333,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
       </div>
 
       {showLeaderboard && (
-        <div className="absolute top-20 right-4 z-50 w-64 bg-slate-800 border border-slate-700 rounded-xl shadow-2xl overflow-hidden animate-in fade-in slide-in-from-top-4 duration-200">
+        <div className="absolute top-20 right-4 z-50 w-64 bg-slate-800 border border-slate-700 rounded-xl overflow-hidden animate-in fade-in slide-in-from-top-4 duration-200">
           <div className="bg-slate-900/50 p-3 border-b border-slate-700 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Trophy size={16} className="text-amber-400" />
@@ -3476,7 +3357,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
                         {idx + 1}
                       </span>
                       <div className="flex items-center gap-1.5">
-                        <div className={`w-2 h-2 rounded-full ${activeUsers.has(score.username) ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-slate-600'}`} title={activeUsers.has(score.username) ? 'Online' : 'Offline'} />
+                        <div className={`w-2 h-2 rounded-full ${activeUsers.has(score.username) ? 'bg-emerald-500' : 'bg-slate-600'}`} title={activeUsers.has(score.username) ? 'Online' : 'Offline'} />
                         <span className={`text-sm truncate max-w-[100px] ${isMe ? 'text-blue-300 font-bold' : activeUsers.has(score.username) ? 'text-slate-200' : 'text-slate-400'}`} title={score.username}>
                           {score.username}
                         </span>
@@ -3496,7 +3377,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
 
       {showMosaicModal && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-          <div className="bg-slate-800 border border-slate-700 rounded-xl shadow-2xl w-full max-w-md overflow-hidden">
+          <div className="bg-slate-800 border border-slate-700 rounded-xl w-full max-w-md overflow-hidden">
             <div className="p-4 border-b border-slate-700 flex items-center justify-between bg-slate-800/50">
               <div className="flex items-center gap-2">
                 <ImageIcon size={18} className="text-blue-400" />
@@ -3564,7 +3445,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
       <div className="fixed bottom-4 left-4 sm:bottom-6 sm:left-6 z-40 flex flex-col gap-2">
         {/* Zoom Pad */}
         <div 
-          className="w-24 sm:w-32 h-8 rounded-full border-2 border-slate-600/50 shadow-lg bg-slate-800/80 backdrop-blur-md flex items-center justify-center cursor-ew-resize touch-none"
+          className="w-24 sm:w-32 h-8 rounded-full border-2 border-slate-600/50 bg-slate-800/80 backdrop-blur-md flex items-center justify-center cursor-ew-resize touch-none"
           onPointerDown={handleZoomPadPointerDown}
           onPointerMove={handleZoomPadPointerMove}
           onPointerUp={handleZoomPadPointerUp}
@@ -3580,7 +3461,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
 
         {/* Mini Image Pad */}
         <div
-          className="rounded-xl border-2 border-slate-600/50 shadow-2xl overflow-hidden cursor-pointer touch-none bg-slate-800/80 backdrop-blur-md p-1.5 transition-transform hover:scale-105"
+          className="rounded-xl border-2 border-slate-600/50 overflow-hidden cursor-pointer touch-none bg-slate-800/80 backdrop-blur-md p-1.5 transition-transform hover:scale-105"
           onPointerDown={handleMiniPadPointerDown}
           onPointerMove={handleMiniPadPointerMove}
           onPointerUp={handleMiniPadPointerUp}
@@ -3599,7 +3480,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
         >
           <div className="relative max-w-[95vw] max-h-[95vh] flex items-center justify-center">
             <button
-              className="absolute -top-4 -right-4 sm:-top-6 sm:-right-6 bg-slate-800 text-white rounded-full p-2 hover:bg-slate-700 shadow-xl border border-slate-600 transition-colors z-10"
+              className="absolute -top-4 -right-4 sm:-top-6 sm:-right-6 bg-slate-800 text-white rounded-full p-2 hover:bg-slate-700 border border-slate-600 transition-colors z-10"
               onClick={(e) => { e.stopPropagation(); setShowFullImage(false); }}
             >
               <X size={20} className="sm:w-6 sm:h-6" />
@@ -3607,7 +3488,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack }: { 
             <img 
               src={imageUrl} 
               alt="Full Puzzle" 
-              className="max-w-full max-h-[90vh] object-contain rounded-lg shadow-2xl" 
+              className="max-w-full max-h-[90vh] object-contain rounded-lg" 
               onClick={(e) => e.stopPropagation()}
             />
           </div>
