@@ -805,6 +805,9 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack, user
         };
 
         const onTouchStart = (e: TouchEvent) => {
+          if (miniPadDragRef.current?.isDragging || zoomPadDragRef.current?.isDragging) {
+            return;
+          }
           activeTouches = e.touches.length;
           const currentTime = Date.now();
           
@@ -843,6 +846,9 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack, user
         };
 
         const onTouchMove = (e: TouchEvent) => {
+          if (miniPadDragRef.current?.isDragging || zoomPadDragRef.current?.isDragging) {
+            return;
+          }
           if (isDoubleTapZooming && e.touches.length === 1) {
             e.preventDefault();
             const currentY = e.touches[0].clientY;
