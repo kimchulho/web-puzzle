@@ -3383,7 +3383,8 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack, user
     const dx = e.clientX - zoomPadDragRef.current.x;
     if (Math.abs(dx) > 0) {
       // Sensitivity: 1 pixel = 1% zoom change
-      const zoomFactor = 1 + (dx * 0.01);
+      // Reversed: dx > 0 (right) is zoom out (-), dx < 0 (left) is zoom in (+)
+      const zoomFactor = 1 - (dx * 0.01);
       
       const canvas = document.querySelector('canvas');
       if (!canvas) return;
@@ -3824,9 +3825,9 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack, user
           title="Drag left/right to zoom"
         >
           <div className="flex items-center justify-between w-full px-3 text-slate-400 pointer-events-none">
-            <span className="text-lg font-bold leading-none mb-0.5">-</span>
-            <div className="w-6 sm:w-10 h-1 bg-slate-600 rounded-full"></div>
             <span className="text-lg font-bold leading-none mb-0.5">+</span>
+            <div className="w-6 sm:w-10 h-1 bg-slate-600 rounded-full"></div>
+            <span className="text-lg font-bold leading-none mb-0.5">-</span>
           </div>
         </div>
 
