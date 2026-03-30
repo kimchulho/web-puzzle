@@ -21,6 +21,7 @@ const Lobby = ({ onJoinRoom, user, onLogout, onAdmin, onLoginClick }: { onJoinRo
   const [imageSource, setImageSource] = useState<'public' | 'custom'>('public');
   const [publicImages, setPublicImages] = useState<any[]>([]);
   const [isImageModalOpen, setIsImageModalOpen] = useState(false);
+  const [showStatsModal, setShowStatsModal] = useState(false);
 
   useEffect(() => {
     const fetchPublicImages = async () => {
@@ -302,18 +303,24 @@ const Lobby = ({ onJoinRoom, user, onLogout, onAdmin, onLoginClick }: { onJoinRo
           <div className="flex items-center justify-center bg-indigo-500/10 w-8 h-8 sm:w-9 sm:h-9 rounded-lg border border-indigo-500/20 shrink-0">
             <Grid3X3 size={18} className="text-indigo-400" />
           </div>
-          <span className="font-bold text-sm sm:text-base hidden sm:block">Web Puzzle</span>
+          <span className="font-bold text-sm sm:text-base">Web Puzzle</span>
         </div>
         <div className="flex items-center gap-1.5 sm:gap-2">
           {user ? (
             <>
-              <div className="hidden md:flex items-center gap-4 mr-2 text-sm">
+              <div className="flex items-center gap-2 mr-2 text-xs sm:text-sm">
                 <div className="flex items-center gap-1.5 text-slate-300">
-                  <span className="text-slate-500">환영합니다,</span>
-                  <span className="font-medium text-indigo-400">{user.username}</span>
-                  <span className="text-slate-500">님</span>
+                  <span className="text-slate-500 hidden sm:inline">환영합니다,</span>
+                  <button 
+                    onClick={() => setShowStatsModal(true)}
+                    className="font-medium text-indigo-400 hover:text-indigo-300 transition-colors"
+                  >
+                    {user.username}
+                  </button>
+                  <span className="text-slate-500 hidden sm:inline">님</span>
                 </div>
-                <div className="flex items-center gap-3 text-slate-400">
+                
+                <div className="hidden md:flex items-center gap-3 text-slate-400 ml-2">
                   <span title="완성한 퍼즐" className="flex items-center gap-1">
                     <Trophy className="w-4 h-4 text-yellow-500" />
                     {user.completed_puzzles || 0}
@@ -324,6 +331,39 @@ const Lobby = ({ onJoinRoom, user, onLogout, onAdmin, onLoginClick }: { onJoinRo
                   </span>
                 </div>
               </div>
+
+              {/* Stats Modal (Mobile Only) */}
+              {showStatsModal && (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 md:hidden">
+                  <div className="bg-slate-900 border border-slate-700 rounded-2xl p-5 w-full max-w-sm text-white shadow-2xl">
+                    <h3 className="text-base font-bold mb-4">나의 전적</h3>
+                    <div className="space-y-2.5 mb-5 text-sm">
+                      <div className="flex justify-between">
+                        <span className="text-slate-400">완성한 퍼즐</span>
+                        <span className="font-medium">{user.completed_puzzles || 0}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-400">맞춘 조각</span>
+                        <span className="font-medium">{user.placed_pieces || 0}</span>
+                      </div>
+                    </div>
+                    <div className="flex gap-3">
+                      <button 
+                        onClick={onLogout}
+                        className="flex-1 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded-lg transition-colors text-sm"
+                      >
+                        로그아웃
+                      </button>
+                      <button 
+                        onClick={() => setShowStatsModal(false)}
+                        className="flex-1 py-2 bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors text-sm"
+                      >
+                        닫기
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {user.role === 'admin' && (
                 <button 
@@ -338,7 +378,7 @@ const Lobby = ({ onJoinRoom, user, onLogout, onAdmin, onLoginClick }: { onJoinRo
 
               <button 
                 onClick={onLogout}
-                className="flex items-center justify-center w-8 h-8 sm:w-9 sm:h-9 bg-slate-800/50 hover:bg-red-500/20 hover:text-red-400 rounded-lg transition-colors border border-slate-700/50 text-slate-400 shrink-0"
+                className="hidden sm:flex items-center justify-center w-8 h-8 sm:w-9 sm:h-9 bg-slate-800/50 hover:bg-red-500/20 hover:text-red-400 rounded-lg transition-colors border border-slate-700/50 text-slate-400 shrink-0"
                 title="로그아웃"
               >
                 <LogOut size={18} />
