@@ -20,8 +20,11 @@ import {
 
 export default function TossLoginScreen({
   onAuthed,
+  onCancel,
 }: {
   onAuthed: (user: AuthUser) => void;
+  /** 로비 등에서 열었을 때 비회원으로 돌아가기 */
+  onCancel?: () => void;
 }) {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -98,18 +101,38 @@ export default function TossLoginScreen({
 
   return (
     <div style={{ padding: "24px 20px", maxWidth: 560, margin: "0 auto" }}>
+      {onCancel ? (
+        <div style={{ marginBottom: 16 }}>
+          <TextButton type="button" size="medium" variant="underline" onClick={onCancel}>
+            ← 게임으로 돌아가기 (비회원)
+          </TextButton>
+        </div>
+      ) : null}
       <Text display="block" typography="t3" fontWeight="bold" color="adaptive.grey900">
         퍼즐 (Apps in Toss)
       </Text>
-      <Text
-        display="block"
-        typography="t6"
-        color="adaptive.grey600"
-        style={{ marginTop: 8, marginBottom: 24 }}
-      >
-        로컬: npm run dev:server 후 npm run dev:toss. AIT/배포 번들은 루트 .env에 VITE_API_BASE_URL(예: Render URL)을 넣은 뒤{" "}
-        npm run ait:build로 다시 만들어야 로그인 API가 동작합니다.
-      </Text>
+      {onCancel ? (
+        <Text
+          display="block"
+          typography="t6"
+          color="adaptive.grey600"
+          style={{ marginTop: 8, marginBottom: 12 }}
+        >
+          전적 연동·계정 저장이 필요할 때만 로그인하면 됩니다. 비회원은 로비에서 그대로 플레이할 수 있습니다.
+        </Text>
+      ) : null}
+      {import.meta.env.DEV ? (
+        <Text
+          display="block"
+          typography="t7"
+          color="adaptive.grey600"
+          style={{ marginTop: onCancel ? 0 : 8, marginBottom: 24 }}
+        >
+          로컬: npm run dev:server 후 npm run dev:toss. AIT 빌드 전 루트 .env에 VITE_API_BASE_URL(Render URL)을 넣으세요.
+        </Text>
+      ) : (
+        <div style={{ marginBottom: 24 }} />
+      )}
       {import.meta.env.PROD && !getApiBase() ? (
         <Text
           display="block"

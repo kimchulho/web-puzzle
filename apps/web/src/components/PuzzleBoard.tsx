@@ -403,7 +403,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack, user
                 type: 'broadcast',
                 event: 'cursorMove',
                 payload: {
-                  username: user.username,
+                  username: user?.username ?? localStorage.getItem('puzzle_guest_name') ?? 'guest',
                   x: broadcastX,
                   y: broadcastY
                 }

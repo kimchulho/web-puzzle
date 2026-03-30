@@ -12,10 +12,12 @@ export default function GameShell({
   user,
   setUser,
   onLoggedOut,
+  onRequestTossLogin,
 }: {
-  user: AuthUser;
+  user: AuthUser | null;
   setUser: (u: AuthUser | null) => void;
   onLoggedOut: () => void;
+  onRequestTossLogin: () => void;
 }) {
   const [pathname, setPathname] = useState(() => window.location.pathname);
   const [currentRoom, setCurrentRoom] = useState<{
@@ -131,7 +133,7 @@ export default function GameShell({
     return <TermsOfService onBack={() => navigateToPath("/")} />;
   }
 
-  if (showAdmin && user.role === "admin") {
+  if (showAdmin && user?.role === "admin") {
     return <Admin onBack={() => setShowAdmin(false)} />;
   }
 
@@ -156,9 +158,7 @@ export default function GameShell({
       user={user}
       onLogout={handleLogout}
       onAdmin={() => setShowAdmin(true)}
-      onLoginClick={() => {
-        /* 토스 앱은 이미 로그인됨; 웹 로그인 UI 없음 */
-      }}
+      onLoginClick={onRequestTossLogin}
       onOpenTerms={() => {
         navigateToPath("/terms");
       }}

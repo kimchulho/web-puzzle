@@ -7,6 +7,7 @@ import { loadStoredSession } from "./lib/tossSession";
 export default function App() {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [ready, setReady] = useState(false);
+  const [showTossLogin, setShowTossLogin] = useState(false);
 
   useEffect(() => {
     const s = loadStoredSession();
@@ -22,15 +23,24 @@ export default function App() {
     );
   }
 
-  if (user) {
+  if (showTossLogin) {
     return (
-      <GameShell
-        user={user}
-        setUser={setUser}
-        onLoggedOut={() => setUser(null)}
+      <TossLoginScreen
+        onAuthed={(u) => {
+          setUser(u);
+          setShowTossLogin(false);
+        }}
+        onCancel={() => setShowTossLogin(false)}
       />
     );
   }
 
-  return <TossLoginScreen onAuthed={setUser} />;
+  return (
+    <GameShell
+      user={user}
+      setUser={setUser}
+      onLoggedOut={() => setUser(null)}
+      onRequestTossLogin={() => setShowTossLogin(true)}
+    />
+  );
 }
