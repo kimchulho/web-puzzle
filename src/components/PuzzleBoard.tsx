@@ -264,6 +264,20 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack, user
         app.stage.addChild(world);
         worldRef.current = world;
 
+        let lastWidth = app.screen.width;
+        let lastHeight = app.screen.height;
+
+        app.renderer.on('resize', (width, height) => {
+          if (worldRef.current) {
+            const dx = (width - lastWidth) / 2;
+            const dy = (height - lastHeight) / 2;
+            worldRef.current.x += dx;
+            worldRef.current.y += dy;
+          }
+          lastWidth = width;
+          lastHeight = height;
+        });
+
         const cursorsContainer = new PIXI.Container();
         cursorsContainer.zIndex = 2000;
         world.addChild(cursorsContainer);
