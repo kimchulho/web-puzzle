@@ -10,6 +10,7 @@ import {
 } from "@toss/tds-mobile";
 import { useCallback, useState } from "react";
 import { getApiBase } from "./lib/apiBase";
+import { useTossSafeAreaInsets } from "./useTossSafeAreaInsets";
 import {
   clearSession,
   fetchAuthMe,
@@ -31,6 +32,7 @@ export default function TossLoginScreen({
   const [devCode, setDevCode] = useState("");
   const [devReferrer, setDevReferrer] = useState("sandbox");
   const [devSheetOpen, setDevSheetOpen] = useState(false);
+  const tossSafe = useTossSafeAreaInsets();
 
   const finishLogin = useCallback(
     async (body: { authorizationCode: string; referrer: string }) => {
@@ -100,7 +102,17 @@ export default function TossLoginScreen({
   const s = loadStoredSession();
 
   return (
-    <div style={{ padding: "24px 20px", maxWidth: 560, margin: "0 auto" }}>
+    <div
+      className="box-border"
+      style={{
+        paddingTop: tossSafe.top + 24,
+        paddingBottom: tossSafe.bottom + 24,
+        paddingLeft: Math.max(tossSafe.left, 20),
+        paddingRight: Math.max(tossSafe.right, 20),
+        maxWidth: 560,
+        margin: "0 auto",
+      }}
+    >
       {onCancel ? (
         <div style={{ marginBottom: 16 }}>
           <TextButton type="button" size="medium" variant="underline" onClick={onCancel}>
@@ -109,7 +121,7 @@ export default function TossLoginScreen({
         </div>
       ) : null}
       <Text display="block" typography="t3" fontWeight="bold" color="adaptive.grey900">
-        퍼즐 (Apps in Toss)
+        웹퍼즐 (Apps in Toss)
       </Text>
       {onCancel ? (
         <Text

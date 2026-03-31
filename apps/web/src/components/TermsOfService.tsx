@@ -7,10 +7,20 @@ import { ChevronLeft } from 'lucide-react';
 
 const EFFECTIVE_DATE = '2026년 3월 31일';
 
-export default function TermsOfService({ onBack }: { onBack: () => void }) {
+export default function TermsOfService({
+  onBack,
+  /** 앱인토스: 상태바 높이만큼 sticky 기준선을 내림 */
+  safeAreaTop = 0,
+}: {
+  onBack: () => void;
+  safeAreaTop?: number;
+}) {
   return (
     <div className="min-h-screen bg-slate-950 text-slate-200">
-      <header className="sticky top-0 z-10 border-b border-slate-800 bg-slate-950/90 backdrop-blur-sm px-4 py-3 flex items-center gap-3">
+      <header
+        className="sticky z-10 border-b border-slate-800 bg-slate-950/90 backdrop-blur-sm px-4 py-3 flex items-center gap-3"
+        style={{ top: safeAreaTop }}
+      >
         <button
           type="button"
           onClick={onBack}

@@ -20,14 +20,14 @@ function getUserAgent(): {
   const ua = navigator.userAgent || "";
   const isAndroid = /Android/i.test(ua);
   const isIOS = /iPhone|iPad|iPod/i.test(ua);
-  const dark = window.matchMedia?.("(prefers-color-scheme: dark)")?.matches === true;
   return {
     fontA11y: undefined,
     fontScale: 1,
     isAndroid,
     /** 데스크톱 브라우저는 iOS 쪽 변수로 폴백 (TDS 로컬 프리뷰용) */
     isIOS: isIOS || !isAndroid,
-    colorPreference: dark ? "dark" : "light",
+    /** 앱인토스 WebView는 라이트 모드만 지원 */
+    colorPreference: "light",
   };
 }
 

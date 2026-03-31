@@ -13,7 +13,7 @@
     "build": "npm run build:web",
     "build:web": "vite build --config apps/web/vite.config.ts",
     "build:toss": "vite build --config apps/toss/vite.config.ts",
-    "ait:build": "npx ait build",
+    "ait:build": "node scripts/clean-toss-dist-for-ait.mjs && npx ait build",
     "ait:deploy": "npx ait deploy",
     "dev:granite": "npx granite dev",
     "android:reverse": "node scripts/android-adb-reverse.mjs",

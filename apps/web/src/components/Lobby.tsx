@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Trophy, Grid3X3, RefreshCw, Users, Lock, Image as ImageIcon, Play, Plus, Grid, Clock, Maximize, Minimize, RotateCcw, LogOut, ShieldAlert, LogIn, ChevronDown } from 'lucide-react';
+import { Button } from '@toss/tds-mobile';
+import { Trophy, Grid3X3, RefreshCw, Users, Lock, Image as ImageIcon, Play, Plus, Grid, Clock, RotateCcw, Maximize, Minimize, LogOut, ShieldAlert, LogIn, ChevronDown } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
 import { motion } from 'motion/react';
 import { encodeRoomId } from '../lib/roomCode';
@@ -13,7 +14,30 @@ const formatPlayTime = (seconds: number) => {
   return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
 };
 
-const Lobby = ({ onJoinRoom, user, onLogout, onAdmin, onLoginClick, onOpenTerms }: { onJoinRoom: (roomId: number, imageUrl: string, pieceCount: number) => void, user?: any, onLogout: () => void, onAdmin: () => void, onLoginClick: () => void, onOpenTerms?: () => void }) => {
+export type TossLobbyUi = {
+  safeArea: { top: number; left: number; right: number; bottom: number };
+  brandTitle: string;
+  brandIconUrl: string;
+};
+
+const Lobby = ({
+  onJoinRoom,
+  user,
+  onLogout,
+  onAdmin,
+  onLoginClick,
+  onOpenTerms,
+  tossUi,
+}: {
+  onJoinRoom: (roomId: number, imageUrl: string, pieceCount: number) => void;
+  user?: any;
+  onLogout: () => void;
+  onAdmin: () => void;
+  onLoginClick: () => void;
+  onOpenTerms?: () => void;
+  /** 앱인토스: 상태바 인셋 + TDS 상단(내비 영역) */
+  tossUi?: TossLobbyUi;
+}) => {
   const [activeRooms, setActiveRooms] = useState<any[]>([]);
   const [completedRooms, setCompletedRooms] = useState<any[]>([]);
   const [pieceCount, setPieceCount] = useState(100);
@@ -22,6 +46,7 @@ const Lobby = ({ onJoinRoom, user, onLogout, onAdmin, onLoginClick, onOpenTerms 
   const [publicImages, setPublicImages] = useState<any[]>([]);
   const [isImageModalOpen, setIsImageModalOpen] = useState(false);
   const [showStatsModal, setShowStatsModal] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState<boolean>(!!document.fullscreenElement);
 
   useEffect(() => {
     const fetchPublicImages = async () => {
@@ -79,7 +104,6 @@ const Lobby = ({ onJoinRoom, user, onLogout, onAdmin, onLoginClick, onOpenTerms 
   const [maxPlayers, setMaxPlayers] = useState<number>(8);
   const [password, setPassword] = useState<string>('');
   const [isCreating, setIsCreating] = useState(false);
-  const [isFullscreen, setIsFullscreen] = useState(false);
   const [guestName, setGuestName] = useState(() => {
     return localStorage.getItem('puzzle_guest_name') || `익명#${Math.floor(Math.random() * 10000).toString().padStart(4, '0')}`;
   });
@@ -91,24 +115,32 @@ const Lobby = ({ onJoinRoom, user, onLogout, onAdmin, onLoginClick, onOpenTerms 
   }, [guestName, user]);
 
   useEffect(() => {
-    const handleFullscreenChange = () => {
-      setIsFullscreen(!!document.fullscreenElement);
-    };
-    document.addEventListener('fullscreenchange', handleFullscreenChange);
-    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+    const onFullscreenChange = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener('fullscreenchange', onFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', onFullscreenChange);
   }, []);
 
-  const toggleFullscreen = async () => {
-    try {
-      if (!document.fullscreenElement) {
-        await document.documentElement.requestFullscreen();
-      } else {
-        await document.exitFullscreen();
-      }
-    } catch (err) {
-      console.error("Error attempting to toggle fullscreen:", err);
-    }
-  };
+  useEffect(() => {
+    if (!tossUi) return;
+
+    // iOS WebView pinch zoom/gesture 확대 방지
+    const preventGesture = (e: Event) => e.preventDefault();
+    // 트랙패드 ctrl+wheel 확대 방지
+    const preventCtrlZoom = (e: WheelEvent) => {
+      if (e.ctrlKey) e.preventDefault();
+    };
+
+    document.addEventListener('gesturestart', preventGesture, { passive: false });
+    document.addEventListener('gesturechange', preventGesture, { passive: false });
+    document.addEventListener('gestureend', preventGesture, { passive: false });
+    document.addEventListener('wheel', preventCtrlZoom, { passive: false });
+    return () => {
+      document.removeEventListener('gesturestart', preventGesture);
+      document.removeEventListener('gesturechange', preventGesture);
+      document.removeEventListener('gestureend', preventGesture);
+      document.removeEventListener('wheel', preventCtrlZoom);
+    };
+  }, [tossUi]);
 
   const toggleOrientation = async () => {
     try {
@@ -128,6 +160,18 @@ const Lobby = ({ onJoinRoom, user, onLogout, onAdmin, onLoginClick, onOpenTerms 
       }
     } catch (err) {
       console.error("Error attempting to lock orientation:", err);
+    }
+  };
+
+  const toggleFullscreen = async () => {
+    try {
+      if (!document.fullscreenElement) {
+        await document.documentElement.requestFullscreen();
+      } else if (document.exitFullscreen) {
+        await document.exitFullscreen();
+      }
+    } catch (err) {
+      console.error('Error toggling fullscreen:', err);
     }
   };
 
@@ -295,32 +339,39 @@ const Lobby = ({ onJoinRoom, user, onLogout, onAdmin, onLoginClick, onOpenTerms 
     onJoinRoom(room.id, room.image_url, room.totalPieces || room.piece_count);
   };
 
-  return (
-    <div className="min-h-screen relative bg-slate-950 flex flex-col items-center pt-20 pb-12 px-4 overflow-y-auto">
-      {/* Top Menu Bar */}
-      <div className="fixed top-0 left-0 w-full z-50 bg-slate-900/80 backdrop-blur-sm border-b border-slate-700/50 p-2 sm:p-3 flex items-center justify-between text-white">
-        <div className="flex items-center gap-2">
-          <div className="flex items-center justify-center bg-indigo-500/10 w-8 h-8 sm:w-9 sm:h-9 rounded-lg border border-indigo-500/20 shrink-0">
-            <Grid3X3 size={18} className="text-indigo-400" />
-          </div>
-          <span className="font-bold text-sm sm:text-base">Web Puzzle</span>
-        </div>
-        <div className="flex items-center gap-1.5 sm:gap-2">
+  const tossLight = !!tossUi;
+
+  const headerActions = (
+    <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0 min-w-0">
           {user ? (
             <>
               <div className="flex items-center gap-2 mr-2 text-xs sm:text-sm">
-                <div className="flex items-center gap-1.5 text-slate-300">
-                  <span className="text-slate-500 hidden sm:inline">환영합니다,</span>
+                <div
+                  className={`flex items-center gap-1.5 ${tossLight ? "text-slate-800" : "text-slate-300"}`}
+                >
+                  <span className={`hidden sm:inline ${tossLight ? "text-slate-500" : "text-slate-500"}`}>
+                    환영합니다,
+                  </span>
                   <button 
                     onClick={() => setShowStatsModal(true)}
-                    className="font-medium text-indigo-400 hover:text-indigo-300 transition-colors"
+                    className={`font-medium transition-colors ${
+                      tossLight
+                        ? "text-indigo-600 hover:text-indigo-700"
+                        : "text-indigo-400 hover:text-indigo-300"
+                    }`}
                   >
                     {user.username}
                   </button>
-                  <span className="text-slate-500 hidden sm:inline">님</span>
+                  <span className={`hidden sm:inline ${tossLight ? "text-slate-500" : "text-slate-500"}`}>
+                    님
+                  </span>
                 </div>
                 
-                <div className="hidden md:flex items-center gap-3 text-slate-400 ml-2">
+                <div
+                  className={`hidden md:flex items-center gap-3 ml-2 ${
+                    tossLight ? "text-slate-600" : "text-slate-400"
+                  }`}
+                >
                   <span title="완성한 퍼즐" className="flex items-center gap-1">
                     <Trophy className="w-4 h-4 text-yellow-500" />
                     {user.completed_puzzles || 0}
@@ -368,7 +419,11 @@ const Lobby = ({ onJoinRoom, user, onLogout, onAdmin, onLoginClick, onOpenTerms 
               {user.role === 'admin' && (
                 <button 
                   onClick={onAdmin}
-                  className="flex items-center justify-center gap-2 px-3 h-8 sm:h-9 bg-indigo-500/10 hover:bg-indigo-500/20 rounded-lg transition-colors border border-indigo-500/20 text-indigo-400 shrink-0 text-sm font-medium"
+                  className={`flex items-center justify-center gap-2 px-3 h-8 sm:h-9 rounded-lg transition-colors shrink-0 text-sm font-medium border ${
+                    tossLight
+                      ? "bg-indigo-50 hover:bg-indigo-100 border-indigo-200 text-indigo-700"
+                      : "bg-indigo-500/10 hover:bg-indigo-500/20 border-indigo-500/20 text-indigo-400"
+                  }`}
                   title="관리자 페이지"
                 >
                   <ShieldAlert size={16} />
@@ -378,14 +433,23 @@ const Lobby = ({ onJoinRoom, user, onLogout, onAdmin, onLoginClick, onOpenTerms 
 
               <button 
                 onClick={onLogout}
-                className="hidden sm:flex items-center justify-center w-8 h-8 sm:w-9 sm:h-9 bg-slate-800/50 hover:bg-red-500/20 hover:text-red-400 rounded-lg transition-colors border border-slate-700/50 text-slate-400 shrink-0"
+                className={`hidden sm:flex items-center justify-center w-8 h-8 sm:w-9 sm:h-9 rounded-lg transition-colors border shrink-0 ${
+                  tossLight
+                    ? "bg-slate-100 hover:bg-red-50 border-slate-200 text-slate-600 hover:text-red-600"
+                    : "bg-slate-800/50 hover:bg-red-500/20 hover:text-red-400 border-slate-700/50 text-slate-400"
+                }`}
                 title="로그아웃"
               >
                 <LogOut size={18} />
               </button>
             </>
+          ) : tossLight ? (
+            <Button color="primary" variant="fill" size="medium" onClick={onLoginClick}>
+              로그인
+            </Button>
           ) : (
             <button 
+              type="button"
               onClick={onLoginClick}
               className="flex items-center justify-center gap-2 px-4 h-8 sm:h-9 bg-indigo-500 hover:bg-indigo-600 rounded-lg transition-colors text-white text-sm font-medium shrink-0"
             >
@@ -394,28 +458,67 @@ const Lobby = ({ onJoinRoom, user, onLogout, onAdmin, onLoginClick, onOpenTerms 
             </button>
           )}
 
-          <button 
-            onClick={toggleOrientation}
-            className="flex lg:hidden items-center justify-center w-8 h-8 sm:w-9 sm:h-9 bg-slate-800/50 hover:bg-slate-700 rounded-lg transition-colors border border-slate-700/50 text-slate-400 hover:text-white shrink-0"
-            title="Rotate Screen"
-          >
-            <RotateCcw size={18} />
-          </button>
+          {!tossUi ? (
+            <button
+              type="button"
+              onClick={toggleOrientation}
+              className="flex lg:hidden items-center justify-center w-8 h-8 sm:w-9 sm:h-9 bg-slate-800/50 hover:bg-slate-700 rounded-lg transition-colors border border-slate-700/50 text-slate-400 hover:text-white shrink-0"
+              title="Rotate Screen"
+            >
+              <RotateCcw size={18} />
+            </button>
+          ) : null}
+          {!tossUi ? (
+            <button
+              type="button"
+              onClick={toggleFullscreen}
+              className="flex items-center justify-center w-8 h-8 sm:w-9 sm:h-9 bg-slate-800/50 hover:bg-slate-700 rounded-lg transition-colors border border-slate-700/50 text-slate-400 hover:text-white shrink-0"
+              title={isFullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}
+            >
+              {isFullscreen ? <Minimize size={18} /> : <Maximize size={18} />}
+            </button>
+          ) : null}
+    </div>
+  );
 
-          <button 
-            onClick={toggleFullscreen}
-            className="flex items-center justify-center w-8 h-8 sm:w-9 sm:h-9 bg-slate-800/50 hover:bg-slate-700 rounded-lg transition-colors border border-slate-700/50 text-slate-400 hover:text-white shrink-0"
-            title={isFullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}
-          >
-            {isFullscreen ? <Minimize size={18} /> : <Maximize size={18} />}
-          </button>
+  const tossContentPadX = tossUi
+    ? { paddingLeft: tossUi.safeArea.left + 16, paddingRight: tossUi.safeArea.right + 16 }
+    : undefined;
+
+  return (
+    <div
+      className={`min-h-screen relative bg-slate-950 flex flex-col items-center overflow-y-auto box-border ${
+        tossUi ? "pt-4 pb-12" : "pt-20 pb-12 px-4"
+      }`}
+      style={
+        tossUi
+          ? {
+              paddingBottom: tossUi.safeArea.bottom + 48,
+            }
+          : undefined
+      }
+    >
+      {!tossUi ? (
+        <div className="fixed top-0 left-0 w-full z-50 bg-slate-900/80 backdrop-blur-sm border-b border-slate-700/50 p-2 sm:p-3 flex items-center justify-between text-white">
+          <div className="flex items-center gap-2">
+            <div className="flex items-center justify-center bg-indigo-500/10 w-8 h-8 sm:w-9 sm:h-9 rounded-lg border border-indigo-500/20 shrink-0">
+              <Grid3X3 size={18} className="text-indigo-400" />
+            </div>
+            <span className="font-bold text-sm sm:text-base">Web Puzzle</span>
+          </div>
+          {headerActions}
         </div>
-      </div>
+      ) : null}
 
       <motion.div 
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         className="w-full grid grid-cols-1 gap-5 max-w-7xl lg:grid-cols-3 md:grid-cols-2"
+        style={
+          tossUi
+            ? { ...tossContentPadX, paddingTop: 16, boxSizing: "border-box" as const }
+            : undefined
+        }
       >
         {/* Left Column: Create/Join Form */}
         <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 text-center h-fit">
@@ -425,9 +528,11 @@ const Lobby = ({ onJoinRoom, user, onLogout, onAdmin, onLoginClick, onOpenTerms 
             </svg>
           </div>
           
-          <h1 className="text-3xl font-bold text-white mb-2">Web Puzzle</h1>
+          <h1 className="text-3xl font-bold text-white mb-2">
+            {tossUi ? "퍼즐 로비" : "Web Puzzle"}
+          </h1>
           <p className="text-slate-400 mb-4">
-            Create a new puzzle room and invite friends!
+            {tossUi ? "방을 만들고 친구를 초대해 같이 맞춰 보세요." : "Create a new puzzle room and invite friends!"}
           </p>
 
           {!user && (
@@ -752,7 +857,10 @@ const Lobby = ({ onJoinRoom, user, onLogout, onAdmin, onLoginClick, onOpenTerms 
       />
 
       {onOpenTerms && (
-        <footer className="w-full max-w-6xl mx-auto mt-8 pt-4 border-t border-slate-800/80 text-center">
+        <footer
+          className="w-full max-w-6xl mx-auto mt-8 pt-4 border-t border-slate-800/80 text-center box-border"
+          style={tossUi ? tossContentPadX : undefined}
+        >
           <button
             type="button"
             onClick={onOpenTerms}

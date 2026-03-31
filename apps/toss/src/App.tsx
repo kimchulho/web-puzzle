@@ -3,11 +3,13 @@ import type { AuthUser } from "@contracts/auth";
 import GameShell from "./GameShell";
 import TossLoginScreen from "./TossLoginScreen";
 import { loadStoredSession } from "./lib/tossSession";
+import { useTossSafeAreaInsets } from "./useTossSafeAreaInsets";
 
 export default function App() {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [ready, setReady] = useState(false);
   const [showTossLogin, setShowTossLogin] = useState(false);
+  const tossSafe = useTossSafeAreaInsets();
 
   useEffect(() => {
     const s = loadStoredSession();
@@ -17,7 +19,15 @@ export default function App() {
 
   if (!ready) {
     return (
-      <div className="h-screen w-screen bg-slate-950 flex items-center justify-center text-white text-lg">
+      <div
+        className="h-screen w-screen bg-slate-950 flex items-center justify-center text-white text-lg box-border"
+        style={{
+          paddingTop: tossSafe.top,
+          paddingLeft: tossSafe.left,
+          paddingRight: tossSafe.right,
+          paddingBottom: tossSafe.bottom,
+        }}
+      >
         …
       </div>
     );

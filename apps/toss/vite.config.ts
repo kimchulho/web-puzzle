@@ -38,6 +38,7 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 5174,
       strictPort: false,
+      allowedHosts: true,
       proxy: {
         "/api": { target: proxyTarget, changeOrigin: true },
         "/socket.io": { target: proxyTarget, ws: true, changeOrigin: true },
