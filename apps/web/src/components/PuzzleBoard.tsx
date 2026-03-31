@@ -849,7 +849,7 @@ export default function PuzzleBoard({
           const worldX = (x - world.x) / world.scale.x;
           const worldY = (y - world.y) / world.scale.y;
 
-          const newScale = Math.max(0.1, Math.min(world.scale.x * scaleMultiplier, 1));
+          const newScale = Math.max(0.05, Math.min(world.scale.x * scaleMultiplier, 1));
           world.scale.set(newScale);
 
           world.x = x - worldX * world.scale.x;
@@ -921,7 +921,7 @@ export default function PuzzleBoard({
             
             // 위로 드래그하면 축소, 아래로 드래그하면 확대
             const scaleMultiplier = Math.exp(deltaY * 0.01);
-            const newScale = Math.max(0.1, Math.min(doubleTapInitialScale * scaleMultiplier, 1));
+            const newScale = Math.max(0.05, Math.min(doubleTapInitialScale * scaleMultiplier, 1));
             world.scale.set(newScale);
 
             const rect = canvas.getBoundingClientRect();
@@ -934,7 +934,7 @@ export default function PuzzleBoard({
             e.preventDefault();
             const currentDistance = getDistance(e.touches);
             const scaleMultiplier = currentDistance / initialDistance;
-            const newScale = Math.max(0.1, Math.min(initialScale * scaleMultiplier, 1));
+            const newScale = Math.max(0.05, Math.min(initialScale * scaleMultiplier, 1));
             
             world.scale.set(newScale);
 
@@ -3482,7 +3482,7 @@ export default function PuzzleBoard({
       const worldX = (centerX - world.x) / world.scale.x;
       const worldY = (centerY - world.y) / world.scale.y;
       
-      const newScale = Math.max(0.1, Math.min(world.scale.x * zoomFactor, 1));
+      const newScale = Math.max(0.05, Math.min(world.scale.x * zoomFactor, 1));
       world.scale.set(newScale);
       
       world.x = centerX - worldX * world.scale.x;
