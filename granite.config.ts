@@ -5,7 +5,9 @@ import { defineConfig } from "@apps-in-toss/web-framework/config";
  *
  * - appName: 콘솔에 만든 미니앱 ID와 반드시 동일 (intoss://{appName} 검증·업로드에 사용).
  * - outdir: `web.commands.build` 결과물 경로와 일치해야 합니다 (기본: apps/toss/dist).
- * - 로컬 샌드박스: `npm run dev:granite` (아래 web.host/port; 실기기면 PC의 LAN IP로 바꾸고 동일 Wi‑Fi).
+ * - 로컬 샌드박스: `npm run dev:granite` (+ API 필요 시 `npm run dev:server`).
+ * - Android 실기기(USB): `npm run android:reverse` 후 샌드박스에서 `intoss://web-puzzle`.
+ *   (8081=Metro·5174=Vite·3000=API 가 PC로 붙음.) Wi‑Fi만 쓸 땐 web.host 를 PC LAN IP 로.
  *
  * web.host / web.port 는 API(백엔드) 주소가 아닙니다.
  * Vite 개발 서버(미니앱 HTML/JS를 여는 주소)용이에요. Render 등 백엔드 URL은

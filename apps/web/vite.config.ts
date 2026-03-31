@@ -12,6 +12,8 @@ export default defineConfig(({ mode }) => {
   return {
     root: webRoot,
     envDir: repoRoot,
+    /** 모노레포 루트에 두어 middlewareMode + hoist된 node_modules와 맞춤 (캐시 꼬임 완화) */
+    cacheDir: path.join(repoRoot, "node_modules", ".vite-web"),
     plugins: [react(), tailwindcss()],
     define: {
       "process.env.GEMINI_API_KEY": JSON.stringify(env.GEMINI_API_KEY),
@@ -24,6 +26,9 @@ export default defineConfig(({ mode }) => {
     },
     server: {
       hmr: process.env.DISABLE_HMR !== "true",
+      fs: {
+        allow: [repoRoot, webRoot],
+      },
     },
     build: {
       outDir: path.join(webRoot, "dist"),

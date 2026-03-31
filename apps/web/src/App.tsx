@@ -12,14 +12,22 @@ import TermsOfService from './components/TermsOfService';
 import { supabase } from './lib/supabaseClient';
 import { encodeRoomId, decodeRoomId } from './lib/roomCode';
 
+function readStoredPuzzleUser(): unknown | null {
+  try {
+    const raw = localStorage.getItem('puzzle_user');
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch {
+    localStorage.removeItem('puzzle_user');
+    return null;
+  }
+}
+
 export default function App() {
   const [pathname, setPathname] = useState(() => window.location.pathname);
   const [currentRoom, setCurrentRoom] = useState<{id: number, imageUrl: string, pieceCount: number} | null>(null);
   const [loading, setLoading] = useState(true);
-  const [user, setUser] = useState<any>(() => {
-    const storedUser = localStorage.getItem('puzzle_user');
-    return storedUser ? JSON.parse(storedUser) : null;
-  });
+  const [user, setUser] = useState<any>(() => readStoredPuzzleUser());
   const [showAdmin, setShowAdmin] = useState(false);
   const [showAuth, setShowAuth] = useState(false);
 

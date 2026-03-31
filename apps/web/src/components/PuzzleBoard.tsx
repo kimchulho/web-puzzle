@@ -15,27 +15,8 @@ const supabase = createClient(
 
 const SNAP_THRESHOLD = 30;
 
-const isHardwareAccelerationEnabled = () => {
-  try {
-    const canvas = document.createElement('canvas');
-    const gl = (canvas.getContext('webgl') || canvas.getContext('experimental-webgl')) as WebGLRenderingContext | null;
-    if (!gl) return false;
-    
-    const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
-    if (!debugInfo) return true;
-    
-    const renderer = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL).toLowerCase();
-    if (renderer.includes('swiftshader') || 
-        renderer.includes('llvmpipe') || 
-        renderer.includes('software') || 
-        renderer.includes('mesa offscreen')) {
-      return false;
-    }
-    return true;
-  } catch (e) {
-    return false;
-  }
-};
+/** Pixi `RendererType.CANVAS` (pixi.js `rendering/renderers/types.d.ts`) */
+const PIXI_RENDERER_TYPE_CANVAS = 4;
 
 import { encodeRoomId } from '../lib/roomCode';
 
@@ -222,8 +203,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack, user
     const initPixi = async () => {
       try {
         setIsLoading(true);
-        const hwAccelEnabled = isHardwareAccelerationEnabled();
-        
+
         // Update last active time when entering a room
         if (user && user.id) {
           supabase.from('pixi_users').update({ last_active_at: new Date().toISOString() }).eq('id', user.id).then();
@@ -257,6 +237,11 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack, user
         }
 
         appInstance = app;
+        // 별도 캔버스의 WebGL 프로브와 실제 PIXI 렌더러가 다를 수 있음(예: WebGL 실패 후 Canvas).
+        // 떨어지는 인트로는 alpha=0에서 시작하므로, Canvas일 때는 즉시 보이게 한다.
+        const isCanvasRenderer = app.renderer.type === PIXI_RENDERER_TYPE_CANVAS;
+        const useFallingPieceIntro = !isCanvasRenderer;
+
         app.stage.eventMode = 'static';
         app.stage.hitArea = new PIXI.Rectangle(-10000, -10000, 20000, 20000);
         
@@ -2921,8 +2906,8 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack, user
           else if (PIECE_COUNT > 200) maxRes = 1.5;
           
           let targetResolution = Math.min(window.devicePixelRatio || 1, maxRes);
-          if (!hwAccelEnabled) {
-            targetResolution *= 0.5; // 하드웨어 가속 미사용 시 해상도 절반으로 감소
+          if (isCanvasRenderer) {
+            targetResolution *= 0.5; // Canvas(소프트웨어) 렌더 시 VRAM·CPU 부담 완화
           }
           
           // 외곽선이 잘리지 않도록 bounds를 기준으로 패딩을 추가하여 프레임 설정
@@ -3006,7 +2991,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack, user
             pieceContainer.cursor = 'pointer';
             pieceContainer.zIndex = 1;
             
-            if (hwAccelEnabled) {
+            if (useFallingPieceIntro) {
               // Set initial falling state
               pieceContainer.alpha = 0;
               pieceContainer.scale.set(3);
@@ -3022,7 +3007,7 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack, user
                 delay: Math.random() * 40 // 0 to ~0.6 seconds delay
               });
             } else {
-              // 하드웨어 가속 미사용 시 떨어지는 애니메이션 생략
+              // WebGL 프로브와 실제 렌더러 불일치·Canvas 폴백 시 즉시 표시
               pieceContainer.alpha = 1;
               pieceContainer.scale.set(1);
               pieceContainer.x = targetX;
@@ -3139,6 +3124,27 @@ export default function PuzzleBoard({ roomId, imageUrl, pieceCount, onBack, user
             }
           };
           app.ticker.add(fallTicker);
+          // 일부 WebView에서 ticker가 멈추면 alpha=0인 채로 남을 수 있음
+          const fallFallbackMs = 4000;
+          setTimeout(() => {
+            if (!isMounted) return;
+            const ticker = app.ticker;
+            if (!ticker) return;
+            let anyStuck = false;
+            for (const fp of fallingPieces) {
+              if (fp.progress < 1) {
+                anyStuck = true;
+                fp.progress = 1;
+                fp.container.scale.set(1);
+                fp.container.alpha = 1;
+                fp.container.x = fp.targetX;
+                fp.container.y = fp.targetY;
+              }
+            }
+            if (anyStuck) {
+              ticker.remove(fallTicker);
+            }
+          }, fallFallbackMs);
         }
 
         setPlacedPieces(initialPlacedCount);

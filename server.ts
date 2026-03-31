@@ -1,4 +1,5 @@
 import express from "express";
+import { existsSync } from "fs";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -50,6 +51,17 @@ async function startServer() {
   });
   
   const PORT = process.env.PORT || 3000;
+
+  // Allow cross-origin API calls (e.g. local Granite WebView -> Render API).
+  app.use((req, res, next) => {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
+    if (req.method === "OPTIONS") {
+      return res.status(204).end();
+    }
+    return next();
+  });
 
   app.use(express.json());
 
@@ -247,6 +259,7 @@ async function startServer() {
     const { authorizationCode, referrer } = (req.body ?? {}) as TossLoginRequest;
     const code = (authorizationCode ?? "").toString().trim();
     const ref = (referrer ?? "").toString().trim();
+    const codePreview = code ? `${code.slice(0, 8)}...(${code.length})` : "empty";
 
     if (!code || !ref) {
       return res.status(400).json({
@@ -257,72 +270,93 @@ async function startServer() {
     /** Partner API expects lowercase `sandbox` for 샌드박스; `appLogin` types use `SANDBOX`. */
     const partnerReferrer =
       ref === "SANDBOX" || ref.toLowerCase() === "sandbox" ? "sandbox" : ref;
-
-    const tokenRes = await tossPartnerRequest<Record<string, unknown>>({
-      method: "POST",
-      path: "/api-partner/v1/apps-in-toss/user/oauth2/generate-token",
-      headers: {},
-      jsonBody: { authorizationCode: code, referrer: partnerReferrer },
+    console.log("[toss-login] incoming", {
+      referrer: ref,
+      partnerReferrer,
+      codePreview,
     });
 
-    if (tokenRes.statusCode < 200 || tokenRes.statusCode >= 300) {
+    let providerUserId: string;
+    try {
+      const tokenRes = await tossPartnerRequest<Record<string, unknown>>({
+        method: "POST",
+        path: "/api-partner/v1/apps-in-toss/user/oauth2/generate-token",
+        headers: {},
+        jsonBody: { authorizationCode: code, referrer: partnerReferrer },
+      });
+
+      if (tokenRes.statusCode < 200 || tokenRes.statusCode >= 300) {
+        return res.status(502).json({
+          message: `Toss generate-token HTTP ${tokenRes.statusCode}.`,
+          detail: tokenRes.body,
+        });
+      }
+
+      const tokenBody = tokenRes.body as {
+        resultType?: string;
+        success?: { accessToken?: string };
+        error?: string | { reason?: string };
+      };
+
+      if (tokenBody.error === "invalid_grant") {
+        return res.status(401).json({ message: "invalid_grant", detail: tokenBody });
+      }
+
+      if (tokenBody.resultType !== "SUCCESS" || !tokenBody.success?.accessToken) {
+        console.error("[toss-login] generate-token not successful", {
+          resultType: tokenBody.resultType,
+          error: tokenBody.error,
+          referrer: partnerReferrer,
+        });
+        return res.status(502).json({
+          message:
+            `Toss generate-token did not return a successful accessToken. ` +
+            `resultType=${String(tokenBody.resultType)} error=${JSON.stringify(tokenBody.error)}`,
+          detail: tokenBody,
+        });
+      }
+
+      const tossAccessToken = tokenBody.success.accessToken;
+
+      const meRes = await tossPartnerRequest<Record<string, unknown>>({
+        method: "GET",
+        path: "/api-partner/v1/apps-in-toss/user/oauth2/login-me",
+        headers: { Authorization: `Bearer ${tossAccessToken}` },
+      });
+
+      if (meRes.statusCode < 200 || meRes.statusCode >= 300) {
+        return res.status(502).json({
+          message: `Toss login-me HTTP ${meRes.statusCode}.`,
+          detail: meRes.body,
+        });
+      }
+
+      const meBody = meRes.body as {
+        resultType?: string;
+        success?: { userKey?: number };
+        error?: string;
+      };
+
+      if (meBody.error === "invalid_grant") {
+        return res.status(401).json({ message: "invalid_grant", detail: meBody });
+      }
+
+      const userKey = meBody.success?.userKey;
+      if (meBody.resultType !== "SUCCESS" || userKey === undefined || userKey === null) {
+        return res.status(502).json({
+          message: "Toss login-me did not return userKey.",
+          detail: meBody,
+        });
+      }
+
+      providerUserId = String(userKey);
+    } catch (error) {
+      console.error("[toss-login] partner API request failed", error);
       return res.status(502).json({
-        message: `Toss generate-token HTTP ${tokenRes.statusCode}.`,
-        detail: tokenRes.body,
+        message: "Toss partner API request failed.",
+        detail: error instanceof Error ? error.message : String(error),
       });
     }
-
-    const tokenBody = tokenRes.body as {
-      resultType?: string;
-      success?: { accessToken?: string };
-      error?: string | { reason?: string };
-    };
-
-    if (tokenBody.error === "invalid_grant") {
-      return res.status(401).json({ message: "invalid_grant", detail: tokenBody });
-    }
-
-    if (tokenBody.resultType !== "SUCCESS" || !tokenBody.success?.accessToken) {
-      return res.status(502).json({
-        message: "Toss generate-token did not return a successful accessToken.",
-        detail: tokenBody,
-      });
-    }
-
-    const tossAccessToken = tokenBody.success.accessToken;
-
-    const meRes = await tossPartnerRequest<Record<string, unknown>>({
-      method: "GET",
-      path: "/api-partner/v1/apps-in-toss/user/oauth2/login-me",
-      headers: { Authorization: `Bearer ${tossAccessToken}` },
-    });
-
-    if (meRes.statusCode < 200 || meRes.statusCode >= 300) {
-      return res.status(502).json({
-        message: `Toss login-me HTTP ${meRes.statusCode}.`,
-        detail: meRes.body,
-      });
-    }
-
-    const meBody = meRes.body as {
-      resultType?: string;
-      success?: { userKey?: number };
-      error?: string;
-    };
-
-    if (meBody.error === "invalid_grant") {
-      return res.status(401).json({ message: "invalid_grant", detail: meBody });
-    }
-
-    const userKey = meBody.success?.userKey;
-    if (meBody.resultType !== "SUCCESS" || userKey === undefined || userKey === null) {
-      return res.status(502).json({
-        message: "Toss login-me did not return userKey.",
-        detail: meBody,
-      });
-    }
-
-    const providerUserId = String(userKey);
 
     const { data: existingIdentity, error: identityError } = await authSupabase
       .from("pixi_user_identities")
@@ -587,8 +621,17 @@ async function startServer() {
   // ==========================================
   // Vite Middleware (Frontend Serving)
   // ==========================================
-  
-  if (process.env.NODE_ENV !== "production") {
+
+  const webDistIndex = path.join(__dirname, "apps/web/dist/index.html");
+  const useBuiltWeb =
+    process.env.NODE_ENV === "production" && existsSync(webDistIndex);
+
+  if (!useBuiltWeb) {
+    if (process.env.NODE_ENV === "production") {
+      console.warn(
+        "[web] NODE_ENV=production but apps/web/dist/index.html is missing — falling back to Vite dev middleware. Run npm run build:web before serving static production assets."
+      );
+    }
     const vite = await createViteServer({
       configFile: path.join(__dirname, "apps/web/vite.config.ts"),
       server: { middlewareMode: true },
