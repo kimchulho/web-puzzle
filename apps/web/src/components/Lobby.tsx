@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { Button } from '@toss/tds-mobile';
 import { Trophy, Grid3X3, RefreshCw, Users, Lock, Image as ImageIcon, Play, Plus, Grid, Clock, RotateCcw, Maximize, Minimize, LogOut, ShieldAlert, LogIn, ChevronDown } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
 import { motion } from 'motion/react';
@@ -444,9 +443,13 @@ const Lobby = ({
               </button>
             </>
           ) : tossLight ? (
-            <Button color="primary" variant="fill" size="medium" onClick={onLoginClick}>
+            <button
+              type="button"
+              onClick={onLoginClick}
+              className="shrink-0 rounded-lg bg-[#3182F6] px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-[#2563EB] active:opacity-90"
+            >
               로그인
-            </Button>
+            </button>
           ) : (
             <button 
               type="button"

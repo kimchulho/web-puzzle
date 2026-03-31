@@ -37,7 +37,7 @@ export default function TermsOfService({
           <p className="text-slate-400 text-xs mb-2">시행일: {EFFECTIVE_DATE}</p>
           <h2 className="text-lg font-bold text-white mb-3">제1조 (목적)</h2>
           <p>
-            본 약관은 <strong>종이천하</strong>(이하 &quot;운영자&quot;)가 제공하는 온라인 퍼즐 게임 서비스
+            본 약관은 <strong>종이천하</strong>(이하 &quot;운영자&quot;)가 제공하는 온라인 직소 퍼즐 서비스
             <strong className="text-white"> 「웹퍼즐」</strong>(이하 &quot;서비스&quot;)의 이용과 관련하여 운영자와
             이용자 간 권리·의무 및 책임사항, 기타 필요한 사항을 규정함을 목적으로 합니다.
           </p>
@@ -46,7 +46,7 @@ export default function TermsOfService({
         <section>
           <h2 className="text-lg font-bold text-white mb-3">제2조 (정의)</h2>
           <ol className="list-decimal list-inside space-y-2 text-slate-300">
-            <li>&quot;서비스&quot;란 운영자가 제공하는 웹·앱인토스 등 각 채널을 통한 퍼즐 게임 및 부가 기능 일체를 말합니다.</li>
+            <li>&quot;서비스&quot;란 운영자가 제공하는 웹·앱인토스 등 각 채널을 통한 직소 퍼즐 및 부가 기능 일체를 말합니다.</li>
             <li>&quot;이용자&quot;란 본 약관에 동의하고 서비스를 이용하는 자를 말합니다.</li>
             <li>&quot;계정&quot;이란 서비스 이용을 위해 운영자가 부여한 이용 자격 및 이에 수반된 식별 수단을 말합니다.</li>
             <li>&quot;콘텐츠&quot;란 서비스 내 제공되는 이미지, 텍스트, 프로그램, UI 등 일체를 말합니다.</li>
