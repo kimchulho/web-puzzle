@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Trophy, Grid3X3, RefreshCw, Users, Lock, Image as ImageIcon, Play, Plus, Grid, Clock, RotateCcw, Maximize, Minimize, LogOut, ShieldAlert, LogIn, ChevronDown, Languages } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
 import { motion } from 'motion/react';
@@ -15,6 +15,15 @@ const formatPlayTime = (seconds: number) => {
 
 const isBotLikeUser = (name: unknown) =>
   typeof name === 'string' && /(bot|봇)/i.test(name.trim());
+const WEB_REWARDED_AD_UNIT_PATH = '/23346390161/web_puzzle_rewarded';
+const GPT_SCRIPT_ID = 'google-publisher-tag-script';
+const REWARDED_DEBUG_PREFIX = '[RewardedAd]';
+
+declare global {
+  interface Window {
+    googletag?: any;
+  }
+}
 
 export type TossLobbyUi = {
   safeArea: { top: number; left: number; right: number; bottom: number };
@@ -56,6 +65,9 @@ const Lobby = ({
   const [showRoomFullModal, setShowRoomFullModal] = useState(false);
   const [roomFullInfo, setRoomFullInfo] = useState<{ roomCode: string; current: number; max: number } | null>(null);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(!!document.fullscreenElement);
+  const [isRewardAdLoading, setIsRewardAdLoading] = useState(false);
+  const gptLoadPromiseRef = useRef<Promise<void> | null>(null);
+  const gptServicesEnabledRef = useRef(false);
   const isKo = locale === 'ko';
 
   useEffect(() => {
@@ -345,6 +357,158 @@ const Lobby = ({
       alert("방 생성에 실패했습니다.");
     }
     setIsCreating(false);
+  };
+
+  const ensureGptLoaded = async () => {
+    if (typeof window === 'undefined') {
+      throw new Error('Browser environment is required.');
+    }
+
+    if (window.googletag?.apiReady) {
+      console.info(`${REWARDED_DEBUG_PREFIX} GPT already ready`);
+      return;
+    }
+    if (gptLoadPromiseRef.current) {
+      await gptLoadPromiseRef.current;
+      return;
+    }
+
+    gptLoadPromiseRef.current = new Promise<void>((resolve, reject) => {
+      window.googletag = window.googletag || { cmd: [] };
+
+      const existing = document.getElementById(GPT_SCRIPT_ID) as HTMLScriptElement | null;
+      if (existing) {
+        if (window.googletag?.apiReady) {
+          resolve();
+          return;
+        }
+        existing.addEventListener('load', () => resolve(), { once: true });
+        existing.addEventListener('error', () => reject(new Error('Failed to load GPT script.')), { once: true });
+        return;
+      }
+
+      const script = document.createElement('script');
+      script.id = GPT_SCRIPT_ID;
+      script.async = true;
+      script.src = 'https://securepubads.g.doubleclick.net/tag/js/gpt.js';
+      script.onload = () => resolve();
+      script.onerror = () => reject(new Error('Failed to load GPT script.'));
+      document.head.appendChild(script);
+    });
+
+    await gptLoadPromiseRef.current;
+    console.info(`${REWARDED_DEBUG_PREFIX} GPT script loaded`);
+  };
+
+  const showRewardedAdAndWait = async () => {
+    console.info(`${REWARDED_DEBUG_PREFIX} start`, { adUnitPath: WEB_REWARDED_AD_UNIT_PATH });
+    await ensureGptLoaded();
+
+    return await new Promise<boolean>((resolve) => {
+      const gt = window.googletag;
+      if (!gt) {
+        console.warn(`${REWARDED_DEBUG_PREFIX} googletag missing after load`);
+        resolve(false);
+        return;
+      }
+
+      gt.cmd.push(() => {
+        const pubads = gt.pubads();
+        const rewardedSlot = gt.defineOutOfPageSlot(
+          WEB_REWARDED_AD_UNIT_PATH,
+          gt.enums?.OutOfPageFormat?.REWARDED
+        );
+
+        if (!rewardedSlot) {
+          console.warn(`${REWARDED_DEBUG_PREFIX} defineOutOfPageSlot returned null`);
+          resolve(false);
+          return;
+        }
+        console.info(`${REWARDED_DEBUG_PREFIX} slot created`);
+
+        rewardedSlot.addService(pubads);
+
+        let rewardGranted = false;
+        let finalized = false;
+        const finalize = (ok: boolean) => {
+          if (finalized) return;
+          finalized = true;
+          try {
+            pubads.removeEventListener('rewardedSlotReady', onReady);
+            pubads.removeEventListener('rewardedSlotGranted', onGranted);
+            pubads.removeEventListener('rewardedSlotClosed', onClosed);
+            gt.destroySlots([rewardedSlot]);
+          } catch {
+            // noop
+          }
+          console.info(`${REWARDED_DEBUG_PREFIX} finalized`, { ok, rewardGranted });
+          resolve(ok);
+        };
+
+        const onReady = (event: any) => {
+          if (event.slot !== rewardedSlot) return;
+          console.info(`${REWARDED_DEBUG_PREFIX} rewardedSlotReady`);
+          try {
+            event.makeRewardedVisible();
+            console.info(`${REWARDED_DEBUG_PREFIX} makeRewardedVisible called`);
+          } catch {
+            console.error(`${REWARDED_DEBUG_PREFIX} makeRewardedVisible failed`);
+            finalize(false);
+          }
+        };
+        const onGranted = (event: any) => {
+          if (event.slot !== rewardedSlot) return;
+          rewardGranted = true;
+          console.info(`${REWARDED_DEBUG_PREFIX} rewardedSlotGranted`);
+        };
+        const onClosed = (event: any) => {
+          if (event.slot !== rewardedSlot) return;
+          console.info(`${REWARDED_DEBUG_PREFIX} rewardedSlotClosed`);
+          finalize(rewardGranted);
+        };
+
+        pubads.addEventListener('rewardedSlotReady', onReady);
+        pubads.addEventListener('rewardedSlotGranted', onGranted);
+        pubads.addEventListener('rewardedSlotClosed', onClosed);
+
+        if (!gptServicesEnabledRef.current) {
+          gt.enableServices();
+          gptServicesEnabledRef.current = true;
+          console.info(`${REWARDED_DEBUG_PREFIX} enableServices`);
+        }
+
+        console.info(`${REWARDED_DEBUG_PREFIX} display slot`);
+        gt.display(rewardedSlot);
+
+        window.setTimeout(() => {
+          console.warn(`${REWARDED_DEBUG_PREFIX} timeout`);
+          finalize(false);
+        }, 25000);
+      });
+    });
+  };
+
+  const handleCreateRoomWithReward = async () => {
+    if (tossUi) {
+      await handleCreateRoom();
+      return;
+    }
+
+    console.info(`${REWARDED_DEBUG_PREFIX} create-room button clicked (web mode)`);
+    setIsRewardAdLoading(true);
+    const rewarded = await showRewardedAdAndWait().catch((err) => {
+      console.error('Rewarded ad failed:', err);
+      return false;
+    });
+    setIsRewardAdLoading(false);
+    console.info(`${REWARDED_DEBUG_PREFIX} rewarded result`, { rewarded });
+
+    if (!rewarded) {
+      alert(isKo ? '광고를 끝까지 시청하면 방을 만들 수 있어요.' : 'Please finish watching the ad to create a room.');
+      return;
+    }
+
+    await handleCreateRoom();
   };
 
   const handleJoinSpecificRoom = (room: any) => {
@@ -843,8 +1007,8 @@ const Lobby = ({
           </div>
 
           <button
-            onClick={handleCreateRoom}
-            disabled={isCreating || (!user && !guestName.trim())}
+            onClick={handleCreateRoomWithReward}
+            disabled={isCreating || isRewardAdLoading || (!user && !guestName.trim())}
             className={`w-full font-medium py-4 px-6 rounded-xl flex items-center justify-center gap-2 transition-colors ${
               tossSkin
                 ? `${tossSkin.primaryBtn} disabled:bg-slate-200 disabled:text-slate-400`
@@ -852,7 +1016,11 @@ const Lobby = ({
             }`}
           >
             <Plus className="w-5 h-5" />
-            {isCreating ? (isKo ? '생성 중...' : 'Creating...') : (isKo ? '광고 한 편 보고 방 만들기' : 'Watch an ad and create room')}
+            {isCreating || isRewardAdLoading
+              ? (isKo ? '생성 중...' : 'Creating...')
+              : (isKo
+                ? (tossUi ? '방 만들기' : '광고 한 편 보고 방 만들기')
+                : (tossUi ? 'Create room' : 'Watch an ad and create room'))}
           </button>
         </div>
 
