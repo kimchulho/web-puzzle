@@ -540,8 +540,12 @@ export default function PuzzleBoard({
           fromY: number;
           toX: number;
           toY: number;
-          fromScale: number;
-          toScale: number;
+          fromScaleX: number;
+          fromScaleY: number;
+          toScaleX: number;
+          toScaleY: number;
+          fromRotation: number;
+          toRotation: number;
           fromAlpha: number;
           toAlpha: number;
           progress: number;
@@ -3503,14 +3507,17 @@ export default function PuzzleBoard({
             }
             anim.progress = Math.min(1, anim.progress + anim.speed);
             const t = 1 - Math.pow(1 - anim.progress, 3); // easeOutCubic
-            const scale = anim.fromScale + (anim.toScale - anim.fromScale) * t;
+            const scaleX = anim.fromScaleX + (anim.toScaleX - anim.fromScaleX) * t;
+            const scaleY = anim.fromScaleY + (anim.toScaleY - anim.fromScaleY) * t;
             p.x = anim.fromX + (anim.toX - anim.fromX) * t;
             p.y = anim.fromY + (anim.toY - anim.fromY) * t;
-            p.scale.set(scale);
+            p.scale.set(scaleX, scaleY);
+            p.rotation = anim.fromRotation + (anim.toRotation - anim.fromRotation) * t;
             p.alpha = anim.fromAlpha + (anim.toAlpha - anim.fromAlpha) * t;
             if (anim.progress >= 1) {
               if (anim.hideOnFinish) p.visible = false;
-              p.scale.set(1);
+              p.scale.set(1, 1);
+              p.rotation = 0;
               pieceEasterAnims.delete(id);
             }
           });
@@ -3533,14 +3540,18 @@ export default function PuzzleBoard({
               id: i,
               fromX: p.x,
               fromY: p.y,
-              toX: centerX + (Math.random() - 0.5) * boardWidth * 0.9,
-              toY: centerY + (Math.random() - 0.5) * boardHeight * 0.9,
-              fromScale: 1,
-              toScale: 0.18,
+              toX: centerX + (Math.random() - 0.5) * boardWidth * 0.45,
+              toY: centerY + (Math.random() - 0.5) * boardHeight * 0.45,
+              fromScaleX: 1,
+              fromScaleY: 1,
+              toScaleX: 2.8,
+              toScaleY: 2.8,
+              fromRotation: 0,
+              toRotation: (Math.random() - 0.5) * 1.2,
               fromAlpha: p.alpha,
               toAlpha: 0,
               progress: 0,
-              speed: 0.045 + Math.random() * 0.03,
+              speed: 0.04 + Math.random() * 0.025,
               hideOnFinish: true,
             });
           }
@@ -3562,21 +3573,30 @@ export default function PuzzleBoard({
             if (!p) continue;
             const targetX = boardStartX - boardWidth * 0.2 + Math.random() * spreadX;
             const targetY = boardStartY - pieceHeight * 0.5 + Math.random() * (boardHeight + pieceHeight * 1.4);
+            const startScale = 2.1 + Math.random() * 1.2;
+            const isFlipped = Math.random() < 0.22;
+            const startScaleX = isFlipped ? -startScale : startScale;
+            const spinTurns = (Math.random() < 0.5 ? -1 : 1) * (Math.PI * (0.7 + Math.random() * 1.3));
+            const startRotation = spinTurns + (Math.random() - 0.5) * 0.4;
             p.visible = true;
             p.eventMode = 'none';
             p.zIndex = 0;
             pieceEasterAnims.set(i, {
               id: i,
-              fromX: boardStartX + Math.random() * boardWidth,
-              fromY: spawnY - Math.random() * pieceHeight * 8,
+              fromX: targetX + (Math.random() - 0.5) * pieceWidth * 1.8,
+              fromY: targetY - pieceHeight * (0.6 + Math.random() * 2.2),
               toX: targetX,
               toY: targetY,
-              fromScale: 1,
-              toScale: 1,
+              fromScaleX: startScaleX,
+              fromScaleY: startScale,
+              toScaleX: 1,
+              toScaleY: 1,
+              fromRotation: startRotation,
+              toRotation: 0,
               fromAlpha: 1,
               toAlpha: 1,
               progress: 0,
-              speed: 0.02 + Math.random() * 0.025,
+              speed: 0.018 + Math.random() * 0.02,
             });
           }
           if (!easterTicker) {
