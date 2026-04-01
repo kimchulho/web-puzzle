@@ -46,6 +46,7 @@ const Lobby = ({
 }) => {
   const [activeRooms, setActiveRooms] = useState<any[]>([]);
   const [completedRooms, setCompletedRooms] = useState<any[]>([]);
+  const [isRoomsLoading, setIsRoomsLoading] = useState(true);
   const [pieceCount, setPieceCount] = useState(100);
   const [imageUrl, setImageUrl] = useState('https://ewbjogsolylcbfmpmyfa.supabase.co/storage/v1/object/public/checki/2.jpg');
   const [imageSource, setImageSource] = useState<'public' | 'custom'>('public');
@@ -185,72 +186,77 @@ const Lobby = ({
   };
 
   const fetchRooms = async () => {
-    const { data: active } = await supabase
-      .from('pixi_rooms')
-      .select('*')
-      .eq('status', 'active')
-      .eq('is_private', false)
-      .order('created_at', { ascending: false });
-    
-    const { data: completed } = await supabase
-      .from('pixi_rooms')
-      .select('*')
-      .eq('status', 'completed')
-      .eq('is_private', false)
-      .order('created_at', { ascending: false });
+    setIsRoomsLoading(true);
+    try {
+      const { data: active } = await supabase
+        .from('pixi_rooms')
+        .select('*')
+        .eq('status', 'active')
+        .eq('is_private', false)
+        .order('created_at', { ascending: false });
+      
+      const { data: completed } = await supabase
+        .from('pixi_rooms')
+        .select('*')
+        .eq('status', 'completed')
+        .eq('is_private', false)
+        .order('created_at', { ascending: false });
 
-    if (active && active.length > 0) {
-      await Promise.all(active.map(async (room) => {
-        const { count: total } = await supabase
-          .from('pixi_pieces')
-          .select('*', { count: 'exact', head: true })
-          .eq('room_id', room.id);
+      if (active && active.length > 0) {
+        await Promise.all(active.map(async (room) => {
+          const { count: total } = await supabase
+            .from('pixi_pieces')
+            .select('*', { count: 'exact', head: true })
+            .eq('room_id', room.id);
+            
+          const { count: locked } = await supabase
+            .from('pixi_pieces')
+            .select('*', { count: 'exact', head: true })
+            .eq('room_id', room.id)
+            .eq('is_locked', true);
+            
+          room.totalPieces = total || room.piece_count;
+          room.snappedCount = locked || 0;
           
-        const { count: locked } = await supabase
-          .from('pixi_pieces')
-          .select('*', { count: 'exact', head: true })
-          .eq('room_id', room.id)
-          .eq('is_locked', true);
-          
-        room.totalPieces = total || room.piece_count;
-        room.snappedCount = locked || 0;
-        
-        if (total === locked && total > 0 && room.status === 'active') {
-          const { error } = await supabase
-            .from('pixi_rooms')
-            .update({ status: 'completed' })
-            .eq('id', room.id);
-          if (error) {
-            console.error("Failed to auto-complete room:", error);
-          } else {
-            room.status = 'completed';
+          if (total === locked && total > 0 && room.status === 'active') {
+            const { error } = await supabase
+              .from('pixi_rooms')
+              .update({ status: 'completed' })
+              .eq('id', room.id);
+            if (error) {
+              console.error("Failed to auto-complete room:", error);
+            } else {
+              room.status = 'completed';
+            }
           }
-        }
-      }));
-    }
+        }));
+      }
 
-    const finalActive = active ? active.filter(r => r.status === 'active') : [];
-    const newlyCompleted = active ? active.filter(r => r.status === 'completed') : [];
+      const finalActive = active ? active.filter(r => r.status === 'active') : [];
+      const newlyCompleted = active ? active.filter(r => r.status === 'completed') : [];
 
-    if (finalActive.length > 0 || active?.length === 0) {
-      setActiveRooms(prev => {
-        return finalActive.map(newRoom => {
-          const existingRoom = prev.find(r => r.id === newRoom.id);
-          if (existingRoom && existingRoom.currentPlayers !== undefined) {
-            newRoom.currentPlayers = existingRoom.currentPlayers;
-          } else {
-            newRoom.currentPlayers = 0;
-          }
-          return newRoom;
+      if (finalActive.length > 0 || active?.length === 0) {
+        setActiveRooms(prev => {
+          return finalActive.map(newRoom => {
+            const existingRoom = prev.find(r => r.id === newRoom.id);
+            if (existingRoom && existingRoom.currentPlayers !== undefined) {
+              newRoom.currentPlayers = existingRoom.currentPlayers;
+            } else {
+              newRoom.currentPlayers = 0;
+            }
+            return newRoom;
+          });
         });
-      });
-    }
-    
-    if (completed || newlyCompleted.length > 0) {
-      const allCompleted = [...(newlyCompleted || []), ...(completed || [])];
-      // remove duplicates
-      const uniqueCompleted = Array.from(new Map(allCompleted.map(item => [item.id, item])).values());
-      setCompletedRooms(uniqueCompleted);
+      }
+      
+      if (completed || newlyCompleted.length > 0) {
+        const allCompleted = [...(newlyCompleted || []), ...(completed || [])];
+        // remove duplicates
+        const uniqueCompleted = Array.from(new Map(allCompleted.map(item => [item.id, item])).values());
+        setCompletedRooms(uniqueCompleted);
+      }
+    } finally {
+      setIsRoomsLoading(false);
     }
   };
 
@@ -603,7 +609,7 @@ const Lobby = ({
         className="w-full grid grid-cols-1 gap-5 max-w-7xl lg:grid-cols-3 md:grid-cols-2"
         style={
           tossUi
-            ? { ...tossContentPadX, paddingTop: 16, boxSizing: "border-box" as const }
+            ? { ...tossContentPadX, paddingTop: 6, boxSizing: "border-box" as const }
             : undefined
         }
       >
@@ -613,36 +619,38 @@ const Lobby = ({
             tossSkin ? `${tossSkin.card}` : "bg-slate-900 border-slate-800"
           }`}
         >
-          <div
-            className={`w-24 h-24 rounded-2xl flex items-center justify-center mx-auto mb-4 ${
-              tossSkin ? tossSkin.iconBox : "bg-indigo-500/10"
-            }`}
-          >
-            <svg
-              width="60"
-              height="60"
-              viewBox="-20 -30 200 200"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="10"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className={tossSkin ? tossSkin.subtleIcon : "text-indigo-400"}
-            >
-              <path d="M25.18,11.87c0,20.95,13.8,42.39,4.85,42.68-8.95.29-11.99-6.96-17.69-6.96s-8.34,4.77-8.34,18.59,2.64,18.59,8.34,18.59,8.74-7.24,17.69-6.96c8.95.29-4.85,21.73-4.85,42.68,20.95,0,42.39,13.8,42.68,4.85.29-8.95-6.96-11.99-6.96-17.69s4.77-8.34,18.59-8.34,18.59,2.64,18.59,8.34-7.24,8.74-6.96,17.69c.29,8.95,21.73-4.85,42.68-4.85,0-20.95-13.8-42.39-4.85-42.68s11.99,6.96,17.69,6.96,8.34-4.77,8.34-18.59-2.64-18.59-8.34-18.59-8.74,7.24-17.69,6.96c-8.95-.29,4.85-21.73,4.85-42.68-20.95,0-42.39-13.8-42.68-4.85s6.96,11.99,6.96,17.69-4.77,8.34-18.59,8.34-18.59-2.64-18.59-8.34,7.24-8.74,6.96-17.69c-.29-8.95-21.73,4.85-42.68,4.85Z"/>
-            </svg>
-          </div>
-          
-          <h1 className={`text-3xl font-bold mb-2 ${tossSkin ? tossSkin.heading : "text-white"}`}>
-            {tossUi ? "퍼즐 로비" : isKo ? "웹퍼즐" : "Web Puzzle"}
-          </h1>
-          <p className={`mb-4 ${tossSkin ? tossSkin.body : "text-slate-400"}`}>
-            {tossUi
-              ? "방을 만들고 친구를 초대해 같이 맞춰 보세요."
-              : isKo
-                ? "새 퍼즐방을 만들고 친구를 초대해 보세요!"
-                : "Create a new puzzle room and invite friends!"}
-          </p>
+          {!tossUi && (
+            <>
+              <div
+                className={`w-24 h-24 rounded-2xl flex items-center justify-center mx-auto mb-4 ${
+                  tossSkin ? tossSkin.iconBox : "bg-indigo-500/10"
+                }`}
+              >
+                <svg
+                  width="60"
+                  height="60"
+                  viewBox="-20 -30 200 200"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="10"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className={tossSkin ? tossSkin.subtleIcon : "text-indigo-400"}
+                >
+                  <path d="M25.18,11.87c0,20.95,13.8,42.39,4.85,42.68-8.95.29-11.99-6.96-17.69-6.96s-8.34,4.77-8.34,18.59,2.64,18.59,8.34,18.59,8.74-7.24,17.69-6.96c8.95.29-4.85,21.73-4.85,42.68,20.95,0,42.39,13.8,42.68,4.85.29-8.95-6.96-11.99-6.96-17.69s4.77-8.34,18.59-8.34,18.59,2.64,18.59,8.34-7.24,8.74-6.96,17.69c.29,8.95,21.73-4.85,42.68-4.85,0-20.95-13.8-42.39-4.85-42.68s11.99,6.96,17.69,6.96,8.34-4.77,8.34-18.59-2.64-18.59-8.34-18.59-8.74,7.24-17.69,6.96c-8.95-.29,4.85-21.73,4.85-42.68-20.95,0-42.39-13.8-42.68-4.85s6.96,11.99,6.96,17.69-4.77,8.34-18.59,8.34-18.59-2.64-18.59-8.34,7.24-8.74,6.96-17.69c-.29-8.95-21.73,4.85-42.68,4.85Z"/>
+                </svg>
+              </div>
+              
+              <h1 className={`text-3xl font-bold mb-2 ${tossSkin ? tossSkin.heading : "text-white"}`}>
+                {isKo ? "웹퍼즐" : "Web Puzzle"}
+              </h1>
+              <p className={`mb-4 ${tossSkin ? tossSkin.body : "text-slate-400"}`}>
+                {isKo
+                  ? "새 퍼즐방을 만들고 친구를 초대해 보세요!"
+                  : "Create a new puzzle room and invite friends!"}
+              </p>
+            </>
+          )}
 
           {!user && (
             <div className="mb-4">
@@ -724,7 +732,7 @@ const Lobby = ({
                     <span className="text-sm font-medium truncate">
                       {publicImages.find(img => img.url === imageUrl)?.title || 
                        publicImages.find(img => img.url === imageUrl)?.category + ' - ' + publicImages.find(img => img.url === imageUrl)?.style || 
-                       'Select an image'}
+                       (isKo ? '이미지를 선택하세요' : 'Select an image')}
                     </span>
                   </div>
                   <ChevronDown
@@ -774,7 +782,9 @@ const Lobby = ({
                 ))}
               </div>
               <p className={`text-xs mt-2 ${tossSkin ? tossSkin.empty : "text-slate-500"}`}>
-                Actual count may vary slightly to maintain square pieces based on image aspect ratio.
+                {isKo
+                  ? "이미지 비율에 맞춰 정사각형 조각을 유지하기 위해 실제 조각 수는 약간 달라질 수 있습니다."
+                  : "Actual count may vary slightly to maintain square pieces based on image aspect ratio."}
               </p>
             </div>
 
@@ -787,19 +797,26 @@ const Lobby = ({
                 >
                   <Users className="w-4 h-4" /> {isKo ? "최대 인원" : "Max Players"}
                 </label>
-                <select
-                  value={maxPlayers}
-                  onChange={(e) => setMaxPlayers(Number(e.target.value))}
-                  className={`w-full rounded-xl p-3 focus:outline-none text-sm ${
-                    tossSkin
-                      ? `${tossSkin.input} appearance-auto`
-                      : "bg-slate-950 border border-slate-800 text-white focus:border-indigo-500"
-                  }`}
-                >
-                  {[1, 2, 3, 4, 5, 6, 7, 8].map(num => (
-                    <option key={num} value={num}>{num} {num === 1 ? 'Player' : 'Players'}</option>
+                <div className="grid grid-cols-4 gap-2">
+                  {[1, 2, 3, 4, 5, 6, 7, 8].map((num) => (
+                    <button
+                      key={num}
+                      type="button"
+                      onClick={() => setMaxPlayers(num)}
+                      className={`py-2 rounded-lg text-sm font-medium transition-colors ${
+                        maxPlayers === num
+                          ? tossSkin
+                            ? tossSkin.pillOn
+                            : "bg-indigo-500 text-white"
+                          : tossSkin
+                            ? tossSkin.pillOff
+                            : "bg-slate-800 text-slate-400 hover:bg-slate-700"
+                      }`}
+                    >
+                      {num}
+                    </button>
                   ))}
-                </select>
+                </div>
               </div>
               
               <div className="flex-1">
@@ -835,7 +852,7 @@ const Lobby = ({
             }`}
           >
             <Plus className="w-5 h-5" />
-            {isCreating ? (isKo ? '생성 중...' : 'Creating...') : (isKo ? '방 만들기' : 'Create Room')}
+            {isCreating ? (isKo ? '생성 중...' : 'Creating...') : (isKo ? '광고 한 편 보고 방 만들기' : 'Watch an ad and create room')}
           </button>
         </div>
 
@@ -868,7 +885,18 @@ const Lobby = ({
           </div>
 
           <div className="flex-1 overflow-y-auto pr-2 space-y-3 custom-scrollbar">
-            {activeRooms.length === 0 ? (
+            {isRoomsLoading ? (
+              <div
+                className={`h-full flex flex-col items-center justify-center ${
+                  tossSkin ? tossSkin.empty : "text-slate-500"
+                }`}
+              >
+                <div className={`w-8 h-8 rounded-full border-2 border-transparent animate-spin ${
+                  tossSkin ? "border-t-[#2F6FE4] border-r-[#D9E8FF]" : "border-t-indigo-400 border-r-slate-600"
+                }`} />
+                <p className="mt-3 text-sm">{isKo ? "진행 중인 퍼즐방을 불러오는 중..." : "Loading active puzzle rooms..."}</p>
+              </div>
+            ) : activeRooms.length === 0 ? (
               <div
                 className={`h-full flex flex-col items-center justify-center ${
                   tossSkin ? tossSkin.empty : "text-slate-500"
@@ -1035,7 +1063,18 @@ const Lobby = ({
           </div>
 
           <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
-            {completedRooms.length === 0 ? (
+            {isRoomsLoading ? (
+              <div
+                className={`h-full flex flex-col items-center justify-center ${
+                  tossSkin ? tossSkin.empty : "text-slate-500"
+                }`}
+              >
+                <div className={`w-8 h-8 rounded-full border-2 border-transparent animate-spin ${
+                  tossSkin ? "border-t-[#2F6FE4] border-r-[#D9E8FF]" : "border-t-amber-400 border-r-slate-600"
+                }`} />
+                <p className="mt-3 text-sm">{isKo ? "완료된 퍼즐방을 불러오는 중..." : "Loading completed puzzle rooms..."}</p>
+              </div>
+            ) : completedRooms.length === 0 ? (
               <div
                 className={`h-full flex flex-col items-center justify-center ${
                   tossSkin ? tossSkin.empty : "text-slate-500"

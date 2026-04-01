@@ -333,13 +333,20 @@ export default function PuzzleBoard({
     };
   }, [isTossMode, isTossWideMode]);
 
-  /** 리더보드 패널: Toss 모드는 클래스 위치를 그대로 쓰고, 웹만 기본 오프셋 사용 */
-  const leaderboardOffset = !isTossMode && hostWebViewPadding
-    ? {
-        top: 88 + hostWebViewPadding.top,
-        right: 16 + hostWebViewPadding.right,
-      }
-    : undefined;
+  /** 리더보드 패널 위치: 토스 세로는 툴바 아래(배경색 팝업과 유사한 Y), 웹은 기존 오프셋 사용 */
+  const leaderboardOffset = isTossMode
+    ? (isTossWideMode
+        ? undefined
+        : {
+            top: 88 + (hostWebViewPadding?.top ?? 0),
+            right: 0,
+          })
+    : (hostWebViewPadding
+        ? {
+            top: 88 + hostWebViewPadding.top,
+            right: 16 + hostWebViewPadding.right,
+          }
+        : undefined);
 
   useEffect(() => {
     // Fetch room creation time and initial scores
@@ -1035,7 +1042,7 @@ export default function PuzzleBoard({
           
           if (e.touches.length === 1) {
             const timeDiff = currentTime - lastTapTime;
-            if (timeDiff > 0 && timeDiff < 150) {
+            if (timeDiff > 0 && timeDiff < 300) {
               isDoubleTapZooming = true;
               doubleTapZoomStartY = e.touches[0].clientY;
               doubleTapInitialScale = world.scale.x;
@@ -4011,7 +4018,7 @@ export default function PuzzleBoard({
           {!hostLeaderboardToggleRef ? (
             <button
               onClick={() => setShowLeaderboard(!showLeaderboard)}
-              className={`flex sm:hidden items-center justify-center w-7 h-7 rounded-md transition-colors shrink-0 ${
+              className={`${isTossMode && isTossWideMode ? "hidden" : "flex sm:hidden"} items-center justify-center w-7 h-7 rounded-md transition-colors shrink-0 ${
                 showLeaderboard
                   ? (isTossMode ? "bg-[#EAF2FF] text-[#2F6FE4]" : "bg-amber-500/20 border border-amber-500/50 text-amber-400")
                   : (isTossMode ? "bg-[#F4F8FF] text-[#2F6FE4]" : "bg-slate-800 hover:bg-slate-700 border border-slate-600")
@@ -4262,10 +4269,10 @@ export default function PuzzleBoard({
             </>
           )}
 
-          {!hostLeaderboardToggleRef ? (
+          {(isTossMode && isTossWideMode) || !hostLeaderboardToggleRef ? (
             <button
               onClick={() => setShowLeaderboard(!showLeaderboard)}
-              className={`hidden sm:flex items-center justify-center w-7 h-7 rounded-md transition-colors shrink-0 ${
+              className={`${isTossMode && isTossWideMode ? "flex" : "hidden sm:flex"} items-center justify-center w-7 h-7 rounded-md transition-colors shrink-0 ${
                 showLeaderboard
                   ? (isTossMode ? "bg-[#EAF2FF] text-[#2F6FE4]" : "bg-amber-500/20 border border-amber-500/50 text-amber-400")
                   : (isTossMode ? "bg-[#F4F8FF] text-[#2F6FE4]" : "bg-slate-800 hover:bg-slate-700 border border-slate-600")
@@ -4315,7 +4322,7 @@ export default function PuzzleBoard({
               : "bg-slate-800 border border-slate-700"
           } ${
             isTossMode && isTossWideMode
-              ? "fixed top-0 right-0"
+              ? "fixed top-16 right-0"
               : isTossMode
               ? "absolute top-0 right-0"
               : "absolute"
