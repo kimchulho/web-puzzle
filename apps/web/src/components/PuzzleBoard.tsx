@@ -548,9 +548,15 @@ export default function PuzzleBoard({
           toRotation: number;
           fromAlpha: number;
           toAlpha: number;
+          fromTint: number;
+          toTint: number;
+          fromSpriteAlpha: number;
+          toSpriteAlpha: number;
           progress: number;
           speed: number;
+          delayFrames: number;
           hideOnFinish?: boolean;
+          keepEndTransform?: boolean;
         };
         const pieceEasterAnims = new Map<number, PieceEasterAnim>();
         const easterState = {
@@ -558,6 +564,22 @@ export default function PuzzleBoard({
           animating: false,
           smoothedZ: null as number | null,
           lastSwitchAt: 0,
+        };
+        const getPieceSprite = (piece: PIXI.Container) => {
+          const sprite = piece.getChildByLabel('pieceSprite');
+          return sprite && sprite instanceof PIXI.Sprite ? sprite : null;
+        };
+        const lerpColor = (from: number, to: number, t: number) => {
+          const fr = (from >> 16) & 0xff;
+          const fg = (from >> 8) & 0xff;
+          const fb = from & 0xff;
+          const tr = (to >> 16) & 0xff;
+          const tg = (to >> 8) & 0xff;
+          const tb = to & 0xff;
+          const r = Math.round(fr + (tr - fr) * t);
+          const g = Math.round(fg + (tg - fg) * t);
+          const b = Math.round(fb + (tb - fb) * t);
+          return (r << 16) | (g << 8) | b;
         };
 
         const updateTouches = (e: TouchEvent) => {
@@ -3273,6 +3295,7 @@ export default function PuzzleBoard({
             frame: frame
           });
           const pieceSprite = new PIXI.Sprite(pieceTexture);
+          pieceSprite.label = 'pieceSprite';
           
           const lockIconTexture = app.renderer.generateTexture({
             target: lockIconGraphics,
@@ -3505,6 +3528,10 @@ export default function PuzzleBoard({
               pieceEasterAnims.delete(id);
               return;
             }
+            if (anim.delayFrames > 0) {
+              anim.delayFrames--;
+              return;
+            }
             anim.progress = Math.min(1, anim.progress + anim.speed);
             const t = 1 - Math.pow(1 - anim.progress, 3); // easeOutCubic
             const scaleX = anim.fromScaleX + (anim.toScaleX - anim.fromScaleX) * t;
@@ -3514,10 +3541,21 @@ export default function PuzzleBoard({
             p.scale.set(scaleX, scaleY);
             p.rotation = anim.fromRotation + (anim.toRotation - anim.fromRotation) * t;
             p.alpha = anim.fromAlpha + (anim.toAlpha - anim.fromAlpha) * t;
+            const sprite = getPieceSprite(p);
+            if (sprite) {
+              sprite.tint = lerpColor(anim.fromTint, anim.toTint, t);
+              sprite.alpha = anim.fromSpriteAlpha + (anim.toSpriteAlpha - anim.fromSpriteAlpha) * t;
+            }
             if (anim.progress >= 1) {
               if (anim.hideOnFinish) p.visible = false;
-              p.scale.set(1, 1);
-              p.rotation = 0;
+              if (!anim.keepEndTransform) {
+                p.scale.set(1, 1);
+                p.rotation = 0;
+                if (sprite) {
+                  sprite.tint = 0xffffff;
+                  sprite.alpha = 1;
+                }
+              }
               pieceEasterAnims.delete(id);
             }
           });
@@ -3536,12 +3574,19 @@ export default function PuzzleBoard({
             p.visible = true;
             p.eventMode = 'none';
             p.zIndex = 0;
+            const dx = p.x - centerX;
+            const dy = p.y - centerY;
+            const len = Math.max(1, Math.hypot(dx, dy));
+            const nx = dx / len;
+            const ny = dy / len;
+            const outward = Math.max(boardWidth, boardHeight) * (0.6 + Math.random() * 0.55);
+            const sprite = getPieceSprite(p);
             pieceEasterAnims.set(i, {
               id: i,
               fromX: p.x,
               fromY: p.y,
-              toX: centerX + (Math.random() - 0.5) * boardWidth * 0.45,
-              toY: centerY + (Math.random() - 0.5) * boardHeight * 0.45,
+              toX: p.x + nx * outward + (Math.random() - 0.5) * pieceWidth * 1.2,
+              toY: p.y + ny * outward + (Math.random() - 0.5) * pieceHeight * 1.2,
               fromScaleX: 1,
               fromScaleY: 1,
               toScaleX: 2.8,
@@ -3550,8 +3595,13 @@ export default function PuzzleBoard({
               toRotation: (Math.random() - 0.5) * 1.2,
               fromAlpha: p.alpha,
               toAlpha: 0,
+              fromTint: sprite?.tint ?? 0xffffff,
+              toTint: 0xffffff,
+              fromSpriteAlpha: sprite?.alpha ?? 1,
+              toSpriteAlpha: 1,
               progress: 0,
               speed: 0.04 + Math.random() * 0.025,
+              delayFrames: Math.floor(Math.random() * 16),
               hideOnFinish: true,
             });
           }
@@ -3574,29 +3624,39 @@ export default function PuzzleBoard({
             const targetX = boardStartX - boardWidth * 0.2 + Math.random() * spreadX;
             const targetY = boardStartY - pieceHeight * 0.5 + Math.random() * (boardHeight + pieceHeight * 1.4);
             const startScale = 2.1 + Math.random() * 1.2;
-            const isFlipped = Math.random() < 0.22;
+            const isFlipped = Math.random() < 0.28;
             const startScaleX = isFlipped ? -startScale : startScale;
             const spinTurns = (Math.random() < 0.5 ? -1 : 1) * (Math.PI * (0.7 + Math.random() * 1.3));
             const startRotation = spinTurns + (Math.random() - 0.5) * 0.4;
+            const finalRotation = Math.random() * Math.PI * 2; // 0~360도 랜덤 고정
+            const finalFlipped = Math.random() < 0.2;
+            const finalScaleX = finalFlipped ? -1 : 1;
+            const sprite = getPieceSprite(p);
             p.visible = true;
             p.eventMode = 'none';
             p.zIndex = 0;
             pieceEasterAnims.set(i, {
               id: i,
-              fromX: targetX + (Math.random() - 0.5) * pieceWidth * 1.8,
-              fromY: targetY - pieceHeight * (0.6 + Math.random() * 2.2),
+              fromX: targetX + (Math.random() - 0.5) * boardWidth * 0.55,
+              fromY: spawnY - Math.random() * pieceHeight * 8,
               toX: targetX,
               toY: targetY,
               fromScaleX: startScaleX,
               fromScaleY: startScale,
-              toScaleX: 1,
+              toScaleX: finalScaleX,
               toScaleY: 1,
               fromRotation: startRotation,
-              toRotation: 0,
+              toRotation: finalRotation,
               fromAlpha: 1,
               toAlpha: 1,
+              fromTint: sprite?.tint ?? 0xffffff,
+              toTint: finalFlipped ? 0x808080 : 0xffffff,
+              fromSpriteAlpha: sprite?.alpha ?? 1,
+              toSpriteAlpha: finalFlipped ? 0.5 : 1,
               progress: 0,
               speed: 0.018 + Math.random() * 0.02,
+              delayFrames: Math.floor(Math.random() * 22),
+              keepEndTransform: true,
             });
           }
           if (!easterTicker) {
