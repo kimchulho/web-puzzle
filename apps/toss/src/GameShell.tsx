@@ -1,5 +1,11 @@
-import { partner, setDeviceOrientation, tdsEvent } from "@apps-in-toss/web-framework";
-import { useEffect, useRef, useState } from "react";
+import {
+  closeView,
+  graniteEvent,
+  partner,
+  setDeviceOrientation,
+  tdsEvent,
+} from "@apps-in-toss/web-framework";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Modal, Text } from "@toss/tds-mobile";
 import type { AuthUser } from "@contracts/auth";
 import Admin from "@web/components/Admin";
@@ -9,6 +15,7 @@ import TermsOfService from "@web/components/TermsOfService";
 import { decodeRoomId, encodeRoomId } from "@web/lib/roomCode";
 import { supabase } from "@web/lib/supabaseClient";
 import { clearSession } from "./lib/tossSession";
+import { LeavePuzzleConfirmDialog } from "./LeavePuzzleConfirmDialog";
 import {
   TOSS_APP_DISPLAY_NAME,
   TOSS_BRAND_ICON_URL,
@@ -41,8 +48,24 @@ export default function GameShell({
   const tossSafeArea = useTossSafeAreaInsets();
 
   const [showNavLoginModal, setShowNavLoginModal] = useState(false);
+  const [showLeavePuzzleModal, setShowLeavePuzzleModal] = useState(false);
+  const currentRoomRef = useRef<typeof currentRoom>(null);
+  const showAdminRef = useRef(false);
 
-  /** 퍼즐방 회전 버튼: WebView 에서는 HTML Fullscreen + orientation.lock 이 막히는 경우가 많아 네이티브 API 사용 */
+  useEffect(() => {
+    currentRoomRef.current = currentRoom;
+  }, [currentRoom]);
+
+  useEffect(() => {
+    showAdminRef.current = showAdmin;
+  }, [showAdmin]);
+
+  /**
+   * `setDeviceOrientation` 은 기기 자이로를 강제로 돌리는 API가 아니라,
+   * 미니앱(WebView) 쪽에 **가로·세로 표시 방향을 요청**하는 Toss 프레임워크 네이티브 연동입니다.
+   * 퍼즐 보드의 CSS 와이드 모드(`rotate(-90deg)`)와는 별개이며, 상단 툴의 "화면 회전"이 이 API를 씁니다.
+   * 가로로 전환한 뒤 로비(세로 UI)로 돌아올 때만 세로로 맞춥니다.
+   */
   const tossOrientationRef = useRef<"portrait" | "landscape">("portrait");
 
   const handleTossToggleOrientation = async () => {
@@ -55,20 +78,23 @@ export default function GameShell({
     }
   };
 
-  useEffect(() => {
-    if (!currentRoom) return;
-    return () => {
-      tossOrientationRef.current = "portrait";
-      void setDeviceOrientation({ type: "portrait" }).catch(() => {});
-    };
-  }, [currentRoom]);
-
-  /** 로비·약관·관리자: 항상 세로 모드 (퍼즐방만 가로 전환 허용) */
+  /** 로비·약관·관리자: 세로 모드 (퍼즐에서 네이티브 가로를 썼다면 로비 복귀 시 세로로 복원) */
   useEffect(() => {
     if (currentRoom) return;
     tossOrientationRef.current = "portrait";
     void setDeviceOrientation({ type: "portrait" }).catch(() => {});
   }, [currentRoom, pathname, showAdmin]);
+
+  const exitPuzzleToLobby = useCallback(() => {
+    setShowLeavePuzzleModal(false);
+    setCurrentRoom(null);
+    const st = window.history.state as { layer?: string } | null;
+    if (st?.layer === "puzzle-top") {
+      window.history.go(-2);
+    } else {
+      window.history.replaceState({}, "", "/");
+    }
+  }, []);
 
   useEffect(() => {
     const cleanup = tdsEvent.addEventListener("navigationAccessoryEvent", {
@@ -78,6 +104,22 @@ export default function GameShell({
     });
     return cleanup;
   }, []);
+
+  /**
+   * 상단바 앱 이름(제목) 또는 홈 버튼 탭 시 기본 동작은 초기 화면으로 새로고침이에요.
+   * 퍼즐 진행 중에는 뒤로가기와 동일하게 확인 모달을 띄웁니다. (구독 시 네이티브 기본 동작은 대체됨)
+   * @see https://developers-apps-in-toss.toss.im/bedrock/reference/framework/이벤트
+   */
+  useEffect(() => {
+    if (!currentRoom) return;
+    const cleanup = graniteEvent.addEventListener("homeEvent", {
+      onEvent: () => {
+        setShowLeavePuzzleModal(true);
+      },
+      onError: () => {},
+    });
+    return cleanup;
+  }, [currentRoom]);
 
   useEffect(() => {
     // defineConfig 반영이 늦거나 누락되는 경우를 대비해 런타임에서도 액세서리 버튼을 보장합니다.
@@ -104,6 +146,26 @@ export default function GameShell({
     return () => window.removeEventListener("popstate", onPop);
   }, []);
 
+  /**
+   * 로비에서 뒤로 가기 → 히스토리만 타면 약관 등 이전 화면으로 돌아가 혼동될 수 있어,
+   * `/` 두 단(base/top)을 쌓고, base로 pop 되면 미니앱을 닫습니다.
+   */
+  useEffect(() => {
+    if (loading || currentRoom || showAdmin) return;
+    if (pathname !== "/") return;
+    const roomQ = new URLSearchParams(window.location.search).get("room");
+    if (roomQ) return;
+
+    const st = window.history.state as { tossLobbyGuard?: string } | null;
+    if (st?.tossLobbyGuard === "top") return;
+    if (st?.tossLobbyGuard === "base") {
+      window.history.pushState({ tossLobbyGuard: "top" }, "", "/");
+      return;
+    }
+    window.history.replaceState({ tossLobbyGuard: "base" }, "", "/");
+    window.history.pushState({ tossLobbyGuard: "top" }, "", "/");
+  }, [loading, currentRoom, pathname, showAdmin]);
+
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const roomParam = params.get("room");
@@ -120,6 +182,11 @@ export default function GameShell({
           .single()
           .then(({ data, error }) => {
             if (data && !error) {
+              const url = `${window.location.pathname}${window.location.search}`;
+              // 스택에 로비(/)가 없으면 뒤로가기·go(-2)로 로비 복귀가 불가능해 한 번 깔아 둡니다.
+              window.history.replaceState({ layer: "lobby" }, "", "/");
+              window.history.pushState({ layer: "puzzle" }, "", url);
+              window.history.pushState({ layer: "puzzle-top" }, "", url);
               setCurrentRoom({
                 id: data.id,
                 imageUrl: data.image_url,
@@ -139,29 +206,48 @@ export default function GameShell({
     }
 
     const handlePopState = () => {
+      const path = window.location.pathname;
       const p = new URLSearchParams(window.location.search);
       const rp = p.get("room");
+      const st = window.history.state as { layer?: string; tossLobbyGuard?: string } | null;
+
+      if (rp && st?.layer === "puzzle" && currentRoomRef.current) {
+        setShowLeavePuzzleModal(true);
+        window.history.pushState({ layer: "puzzle-top" }, "", window.location.href);
+        return;
+      }
+
       if (!rp) {
         setCurrentRoom(null);
-      } else {
-        const isNumeric = /^\d+$/.test(rp);
-        const decodedId = isNumeric ? parseInt(rp, 10) : decodeRoomId(rp);
-        if (decodedId) {
-          supabase
-            .from("pixi_rooms")
-            .select("*")
-            .eq("id", decodedId)
-            .single()
-            .then(({ data, error }) => {
-              if (data && !error) {
-                setCurrentRoom({
-                  id: data.id,
-                  imageUrl: data.image_url,
-                  pieceCount: data.piece_count,
-                });
-              }
-            });
+        setShowLeavePuzzleModal(false);
+        if (path === "/" && st?.tossLobbyGuard === "base") {
+          if (showAdminRef.current) {
+            setShowAdmin(false);
+            window.history.pushState({ tossLobbyGuard: "top" }, "", "/");
+          } else {
+            void closeView().catch(() => {});
+          }
         }
+        return;
+      }
+
+      const isNumeric = /^\d+$/.test(rp);
+      const decodedId = isNumeric ? parseInt(rp, 10) : decodeRoomId(rp);
+      if (decodedId) {
+        supabase
+          .from("pixi_rooms")
+          .select("*")
+          .eq("id", decodedId)
+          .single()
+          .then(({ data, error }) => {
+            if (data && !error) {
+              setCurrentRoom({
+                id: data.id,
+                imageUrl: data.image_url,
+                pieceCount: data.piece_count,
+              });
+            }
+          });
       }
     };
 
@@ -171,13 +257,14 @@ export default function GameShell({
 
   const handleJoinRoom = (roomId: number, imageUrl: string, pieceCount: number) => {
     const roomCode = encodeRoomId(roomId);
-    window.history.pushState({}, "", `/?room=${roomCode}`);
+    const url = `/?room=${roomCode}`;
+    window.history.pushState({ layer: "puzzle" }, "", url);
+    window.history.pushState({ layer: "puzzle-top" }, "", url);
     setCurrentRoom({ id: roomId, imageUrl, pieceCount });
   };
 
   const handleLeaveRoom = () => {
-    window.history.pushState({}, "", "/");
-    setCurrentRoom(null);
+    exitPuzzleToLobby();
   };
 
   const handleLogout = () => {
@@ -185,6 +272,14 @@ export default function GameShell({
     setShowAdmin(false);
     onLoggedOut();
   };
+
+  const leavePuzzleModal = (
+    <LeavePuzzleConfirmDialog
+      open={showLeavePuzzleModal}
+      onCancel={() => setShowLeavePuzzleModal(false)}
+      onConfirm={exitPuzzleToLobby}
+    />
+  );
 
   const navLoginModal = (
     <Modal open={showNavLoginModal} onOpenChange={setShowNavLoginModal}>
@@ -241,7 +336,12 @@ export default function GameShell({
             paddingBottom: tossSafeArea.bottom,
           }}
         >
-          <TermsOfService safeAreaTop={tossSafeArea.top} onBack={() => navigateToPath("/")} />
+          <TermsOfService
+            safeAreaTop={tossSafeArea.top}
+            onBack={() => {
+              window.history.back();
+            }}
+          />
         </div>
         {navLoginModal}
       </>
@@ -283,6 +383,7 @@ export default function GameShell({
             locale="ko"
           />
         </div>
+        {leavePuzzleModal}
         {navLoginModal}
       </>
     );

@@ -369,6 +369,34 @@ const Lobby = ({
   };
 
   const tossLight = !!tossUi;
+  /** 앱인토스 로비: TDS·퍼즐방과 동일 계열 (밝은 배경 + 블루 포인트) */
+  const tossSkin = tossUi
+    ? {
+        card: "bg-white border-[#D9E8FF] shadow-[0_4px_24px_rgba(47,111,228,0.07)]",
+        heading: "text-slate-900",
+        body: "text-slate-600",
+        label: "text-[#2F6FE4]",
+        input:
+          "bg-[#F4F8FF] border-[#D9E8FF] text-slate-900 placeholder:text-slate-400 focus:border-[#2F6FE4] focus:ring-1 focus:ring-[#2F6FE4]/30",
+        segmentOn: "bg-[#2F6FE4] text-white",
+        segmentOff: "bg-white border border-[#D9E8FF] text-slate-600 hover:bg-[#EAF2FF]",
+        pillOn: "bg-[#2F6FE4] text-white",
+        pillOff: "bg-white border border-[#D9E8FF] text-slate-600 hover:border-[#2F6FE4]/40",
+        primaryBtn: "bg-[#3182F6] hover:bg-[#2563EB] text-white shadow-[0_8px_20px_rgba(47,111,228,0.2)]",
+        iconBox: "bg-[#EAF2FF] text-[#2F6FE4]",
+        subtleIcon: "text-[#2F6FE4]",
+        roomCard: "bg-[#F4F8FF] border-[#D9E8FF] hover:border-[#2F6FE4]/35",
+        joinBtn: "bg-[#EAF2FF] hover:bg-[#2F6FE4] text-[#2F6FE4] hover:text-white border border-[#D9E8FF]",
+        progress: "bg-[#D9E8FF]",
+        progressFill: "bg-[#2F6FE4]",
+        completedAccent: "text-[#2F6FE4]",
+        completedBar: "bg-[#2F6FE4]",
+        viewBtn: "bg-[#EAF2FF] hover:bg-[#2F6FE4] text-[#2F6FE4] hover:text-white border border-[#D9E8FF]",
+        empty: "text-slate-500",
+        footerBorder: "border-[#D9E8FF]",
+        footerLink: "text-slate-500 hover:text-[#2F6FE4]",
+      }
+    : null;
 
   const headerActions = (
     <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0 min-w-0">
@@ -381,11 +409,11 @@ const Lobby = ({
                   <span className={`hidden sm:inline ${tossLight ? "text-slate-500" : "text-slate-500"}`}>
                     환영합니다,
                   </span>
-                  <button 
+                  <button
                     onClick={() => setShowStatsModal(true)}
                     className={`font-medium transition-colors ${
                       tossLight
-                        ? "text-indigo-600 hover:text-indigo-700"
+                        ? "text-[#2F6FE4] hover:text-[#2563EB]"
                         : "text-indigo-400 hover:text-indigo-300"
                     }`}
                   >
@@ -406,7 +434,7 @@ const Lobby = ({
                     {user.completed_puzzles || 0}
                   </span>
                   <span title="맞춘 조각" className="flex items-center gap-1">
-                    <Grid className="w-4 h-4 text-indigo-400" />
+                    <Grid className={`w-4 h-4 ${tossLight ? "text-[#2F6FE4]" : "text-indigo-400"}`} />
                     {user.placed_pieces || 0}
                   </span>
                 </div>
@@ -415,28 +443,42 @@ const Lobby = ({
               {/* Stats Modal (Mobile Only) */}
               {showStatsModal && (
                 <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 md:hidden">
-                  <div className="bg-slate-900 border border-slate-700 rounded-2xl p-5 w-full max-w-sm text-white shadow-2xl">
+                  <div
+                    className={`rounded-2xl p-5 w-full max-w-sm shadow-2xl border ${
+                      tossUi
+                        ? "bg-white border-[#D9E8FF] text-slate-900"
+                        : "bg-slate-900 border-slate-700 text-white"
+                    }`}
+                  >
                     <h3 className="text-base font-bold mb-4">나의 전적</h3>
                     <div className="space-y-2.5 mb-5 text-sm">
                       <div className="flex justify-between">
-                        <span className="text-slate-400">완성한 퍼즐</span>
+                        <span className={tossUi ? "text-slate-500" : "text-slate-400"}>완성한 퍼즐</span>
                         <span className="font-medium">{user.completed_puzzles || 0}</span>
                       </div>
                       <div className="flex justify-between">
-                        <span className="text-slate-400">맞춘 조각</span>
+                        <span className={tossUi ? "text-slate-500" : "text-slate-400"}>맞춘 조각</span>
                         <span className="font-medium">{user.placed_pieces || 0}</span>
                       </div>
                     </div>
                     <div className="flex gap-3">
-                      <button 
+                      <button
                         onClick={onLogout}
-                        className="flex-1 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded-lg transition-colors text-sm"
+                        className={`flex-1 py-2 rounded-lg transition-colors text-sm ${
+                          tossUi
+                            ? "bg-red-50 hover:bg-red-100 text-red-600 border border-red-100"
+                            : "bg-red-500/10 hover:bg-red-500/20 text-red-400"
+                        }`}
                       >
                         로그아웃
                       </button>
-                      <button 
+                      <button
                         onClick={() => setShowStatsModal(false)}
-                        className="flex-1 py-2 bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors text-sm"
+                        className={`flex-1 py-2 rounded-lg transition-colors text-sm ${
+                          tossUi
+                            ? "bg-[#EAF2FF] hover:bg-[#D9E8FF] text-[#2F6FE4] font-medium"
+                            : "bg-slate-800 hover:bg-slate-700"
+                        }`}
                       >
                         닫기
                       </button>
@@ -450,7 +492,7 @@ const Lobby = ({
                   onClick={onAdmin}
                   className={`flex items-center justify-center gap-2 px-3 h-8 sm:h-9 rounded-lg transition-colors shrink-0 text-sm font-medium border ${
                     tossLight
-                      ? "bg-indigo-50 hover:bg-indigo-100 border-indigo-200 text-indigo-700"
+                      ? "bg-[#EAF2FF] hover:bg-[#D9E8FF] border-[#D9E8FF] text-[#2F6FE4]"
                       : "bg-indigo-500/10 hover:bg-indigo-500/20 border-indigo-500/20 text-indigo-400"
                   }`}
                   title="관리자 페이지"
@@ -531,12 +573,13 @@ const Lobby = ({
 
   return (
     <div
-      className={`min-h-screen relative bg-slate-950 flex flex-col items-center overflow-y-auto box-border ${
-        tossUi ? "pt-4 pb-12" : "pt-20 pb-12 px-4"
+      className={`min-h-screen relative flex flex-col items-center overflow-y-auto box-border ${
+        tossUi ? "pb-12 bg-[#F4F8FF]" : "bg-slate-950 pt-20 pb-12 px-4"
       }`}
       style={
         tossUi
           ? {
+              paddingTop: tossUi.safeArea.top + 12,
               paddingBottom: tossUi.safeArea.bottom + 48,
             }
           : undefined
@@ -565,18 +608,40 @@ const Lobby = ({
         }
       >
         {/* Left Column: Create/Join Form */}
-        <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 text-center h-fit">
-          <div className="w-24 h-24 bg-indigo-500/10 rounded-2xl flex items-center justify-center mx-auto mb-4">
-            <svg width="60" height="60" viewBox="-20 -30 200 200" fill="none" stroke="currentColor" strokeWidth="10" strokeLinecap="round" strokeLinejoin="round" className="text-indigo-400">
+        <div
+          className={`rounded-3xl p-5 text-center h-fit border ${
+            tossSkin ? `${tossSkin.card}` : "bg-slate-900 border-slate-800"
+          }`}
+        >
+          <div
+            className={`w-24 h-24 rounded-2xl flex items-center justify-center mx-auto mb-4 ${
+              tossSkin ? tossSkin.iconBox : "bg-indigo-500/10"
+            }`}
+          >
+            <svg
+              width="60"
+              height="60"
+              viewBox="-20 -30 200 200"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="10"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className={tossSkin ? tossSkin.subtleIcon : "text-indigo-400"}
+            >
               <path d="M25.18,11.87c0,20.95,13.8,42.39,4.85,42.68-8.95.29-11.99-6.96-17.69-6.96s-8.34,4.77-8.34,18.59,2.64,18.59,8.34,18.59,8.74-7.24,17.69-6.96c8.95.29-4.85,21.73-4.85,42.68,20.95,0,42.39,13.8,42.68,4.85.29-8.95-6.96-11.99-6.96-17.69s4.77-8.34,18.59-8.34,18.59,2.64,18.59,8.34-7.24,8.74-6.96,17.69c.29,8.95,21.73-4.85,42.68-4.85,0-20.95-13.8-42.39-4.85-42.68s11.99,6.96,17.69,6.96,8.34-4.77,8.34-18.59-2.64-18.59-8.34-18.59-8.74,7.24-17.69,6.96c-8.95-.29,4.85-21.73,4.85-42.68-20.95,0-42.39-13.8-42.68-4.85s6.96,11.99,6.96,17.69-4.77,8.34-18.59,8.34-18.59-2.64-18.59-8.34,7.24-8.74,6.96-17.69c-.29-8.95-21.73,4.85-42.68,4.85Z"/>
             </svg>
           </div>
           
-          <h1 className="text-3xl font-bold text-white mb-2">
-            {tossUi ? "퍼즐 로비" : (isKo ? "웹퍼즐" : "Web Puzzle")}
+          <h1 className={`text-3xl font-bold mb-2 ${tossSkin ? tossSkin.heading : "text-white"}`}>
+            {tossUi ? "퍼즐 로비" : isKo ? "웹퍼즐" : "Web Puzzle"}
           </h1>
-          <p className="text-slate-400 mb-4">
-            {tossUi ? "방을 만들고 친구를 초대해 같이 맞춰 보세요." : (isKo ? "새 퍼즐방을 만들고 친구를 초대해 보세요!" : "Create a new puzzle room and invite friends!")}
+          <p className={`mb-4 ${tossSkin ? tossSkin.body : "text-slate-400"}`}>
+            {tossUi
+              ? "방을 만들고 친구를 초대해 같이 맞춰 보세요."
+              : isKo
+                ? "새 퍼즐방을 만들고 친구를 초대해 보세요!"
+                : "Create a new puzzle room and invite friends!"}
           </p>
 
           {!user && (
@@ -586,28 +651,69 @@ const Lobby = ({
                 placeholder="사용할 닉네임을 입력하세요"
                 value={guestName}
                 onChange={(e) => setGuestName(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500"
+                className={`w-full rounded-xl p-3 focus:outline-none ${
+                  tossSkin
+                    ? tossSkin.input
+                    : "bg-slate-950 border border-slate-800 text-white placeholder-slate-600 focus:border-indigo-500"
+                }`}
               />
             </div>
           )}
 
-
           <div className="space-y-4 mb-4 text-left">
             <div>
-              <label className="block text-sm font-medium text-slate-300 mb-2 flex items-center gap-2">
+              <label
+                className={`block text-sm font-medium mb-2 flex items-center gap-2 ${
+                  tossSkin ? tossSkin.label : "text-slate-300"
+                }`}
+              >
                 <ImageIcon className="w-4 h-4" /> {isKo ? "이미지" : "Image"}
               </label>
               <div className="flex gap-2 mb-2">
-                <button onClick={() => setImageSource('public')} className={`flex-1 py-2 rounded-lg text-sm ${imageSource === 'public' ? 'bg-indigo-500 text-white' : 'bg-slate-800 text-slate-400'}`}>{isKo ? "공개" : "Public"}</button>
-                <button onClick={() => setImageSource('custom')} className={`flex-1 py-2 rounded-lg text-sm ${imageSource === 'custom' ? 'bg-indigo-500 text-white' : 'bg-slate-800 text-slate-400'}`}>{isKo ? "직접 업로드" : "Custom"}</button>
+                <button
+                  onClick={() => setImageSource("public")}
+                  className={`flex-1 py-2 rounded-lg text-sm font-medium ${
+                    imageSource === "public"
+                      ? tossSkin
+                        ? tossSkin.segmentOn
+                        : "bg-indigo-500 text-white"
+                      : tossSkin
+                        ? tossSkin.segmentOff
+                        : "bg-slate-800 text-slate-400"
+                  }`}
+                >
+                  {isKo ? "공개" : "Public"}
+                </button>
+                <button
+                  onClick={() => setImageSource("custom")}
+                  className={`flex-1 py-2 rounded-lg text-sm font-medium ${
+                    imageSource === "custom"
+                      ? tossSkin
+                        ? tossSkin.segmentOn
+                        : "bg-indigo-500 text-white"
+                      : tossSkin
+                        ? tossSkin.segmentOff
+                        : "bg-slate-800 text-slate-400"
+                  }`}
+                >
+                  {isKo ? "직접 업로드" : "Custom"}
+                </button>
               </div>
-              {imageSource === 'public' ? (
+              {imageSource === "public" ? (
                 <button
                   onClick={() => setIsImageModalOpen(true)}
-                  className="w-full bg-slate-950 border border-slate-800 hover:border-indigo-500 rounded-xl p-2 text-white transition-colors flex items-center justify-between group"
+                  className={`w-full rounded-xl p-2 transition-colors flex items-center justify-between group border ${
+                    tossSkin
+                      ? "bg-[#F4F8FF] border-[#D9E8FF] text-slate-900 hover:border-[#2F6FE4]/50"
+                      : "bg-slate-950 border-slate-800 hover:border-indigo-500 text-white"
+                  }`}
                 >
                   <div className="flex items-center gap-3 overflow-hidden">
-                    <div className="w-12 h-12 rounded-lg overflow-hidden bg-slate-900 shrink-0">
+                    <div
+                      className={`w-12 h-12 rounded-lg overflow-hidden shrink-0 ${
+                        tossSkin ? "bg-white border border-[#D9E8FF]" : "bg-slate-900"
+                      }`}
+                    >
                       <img 
                         src={imageUrl} 
                         alt="Selected puzzle" 
@@ -621,50 +727,74 @@ const Lobby = ({
                        'Select an image'}
                     </span>
                   </div>
-                  <ChevronDown className="w-5 h-5 text-slate-500 group-hover:text-indigo-400 shrink-0 mr-2" />
+                  <ChevronDown
+                    className={`w-5 h-5 shrink-0 mr-2 ${
+                      tossSkin ? "text-slate-400 group-hover:text-[#2F6FE4]" : "text-slate-500 group-hover:text-indigo-400"
+                    }`}
+                  />
                 </button>
               ) : (
                 <input
                   type="file"
                   onChange={handleFileUpload}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500 text-sm"
+                  className={`w-full rounded-xl p-3 focus:outline-none text-sm ${
+                    tossSkin
+                      ? tossSkin.input
+                      : "bg-slate-950 border border-slate-800 text-white placeholder-slate-600 focus:border-indigo-500"
+                  }`}
                 />
               )}
             </div>
-            
+
             <div>
-              <label className="block text-sm font-medium text-slate-300 mb-2 flex items-center gap-2">
+              <label
+                className={`block text-sm font-medium mb-2 flex items-center gap-2 ${
+                  tossSkin ? tossSkin.label : "text-slate-300"
+                }`}
+              >
                 <Grid className="w-4 h-4" /> {isKo ? "조각 수" : "Target Piece Count"}
               </label>
               <div className="grid grid-cols-6 gap-2">
-                {[20, 100, 150, 300, 500, 1000].map(count => (
+                {[20, 100, 150, 300, 500, 1000].map((count) => (
                   <button
                     key={count}
                     onClick={() => setPieceCount(count)}
                     className={`py-2 rounded-lg text-sm font-medium transition-colors ${
-                      pieceCount === count 
-                        ? 'bg-indigo-500 text-white' 
-                        : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
+                      pieceCount === count
+                        ? tossSkin
+                          ? tossSkin.pillOn
+                          : "bg-indigo-500 text-white"
+                        : tossSkin
+                          ? tossSkin.pillOff
+                          : "bg-slate-800 text-slate-400 hover:bg-slate-700"
                     }`}
                   >
                     {count}
                   </button>
                 ))}
               </div>
-              <p className="text-xs text-slate-500 mt-2">
+              <p className={`text-xs mt-2 ${tossSkin ? tossSkin.empty : "text-slate-500"}`}>
                 Actual count may vary slightly to maintain square pieces based on image aspect ratio.
               </p>
             </div>
 
             <div className="flex gap-3">
               <div className="flex-1">
-                <label className="block text-sm font-medium text-slate-300 mb-2 flex items-center gap-2">
+                <label
+                  className={`block text-sm font-medium mb-2 flex items-center gap-2 ${
+                    tossSkin ? tossSkin.label : "text-slate-300"
+                  }`}
+                >
                   <Users className="w-4 h-4" /> {isKo ? "최대 인원" : "Max Players"}
                 </label>
                 <select
                   value={maxPlayers}
                   onChange={(e) => setMaxPlayers(Number(e.target.value))}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white focus:outline-none focus:border-indigo-500 text-sm"
+                  className={`w-full rounded-xl p-3 focus:outline-none text-sm ${
+                    tossSkin
+                      ? `${tossSkin.input} appearance-auto`
+                      : "bg-slate-950 border border-slate-800 text-white focus:border-indigo-500"
+                  }`}
                 >
                   {[1, 2, 3, 4, 5, 6, 7, 8].map(num => (
                     <option key={num} value={num}>{num} {num === 1 ? 'Player' : 'Players'}</option>
@@ -673,7 +803,11 @@ const Lobby = ({
               </div>
               
               <div className="flex-1">
-                <label className="block text-sm font-medium text-slate-300 mb-2 flex items-center gap-2">
+                <label
+                  className={`block text-sm font-medium mb-2 flex items-center gap-2 ${
+                    tossSkin ? tossSkin.label : "text-slate-300"
+                  }`}
+                >
                   <Lock className="w-4 h-4" /> {isKo ? "비밀번호 (선택)" : "Password (Optional)"}
                 </label>
                 <input
@@ -681,16 +815,24 @@ const Lobby = ({
                   placeholder={isKo ? "비워두면 공개방" : "Leave empty for public"}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500 text-sm"
+                  className={`w-full rounded-xl p-3 text-sm focus:outline-none ${
+                    tossSkin
+                      ? tossSkin.input
+                      : "bg-slate-950 border border-slate-800 text-white placeholder-slate-600 focus:border-indigo-500"
+                  }`}
                 />
               </div>
             </div>
           </div>
-          
+
           <button
             onClick={handleCreateRoom}
             disabled={isCreating || (!user && !guestName.trim())}
-            className="w-full bg-indigo-500 hover:bg-indigo-600 disabled:bg-slate-800 disabled:text-slate-500 text-white font-medium py-4 px-6 rounded-xl flex items-center justify-center gap-2 transition-colors"
+            className={`w-full font-medium py-4 px-6 rounded-xl flex items-center justify-center gap-2 transition-colors ${
+              tossSkin
+                ? `${tossSkin.primaryBtn} disabled:bg-slate-200 disabled:text-slate-400`
+                : "bg-indigo-500 hover:bg-indigo-600 disabled:bg-slate-800 disabled:text-slate-500 text-white"
+            }`}
           >
             <Plus className="w-5 h-5" />
             {isCreating ? (isKo ? '생성 중...' : 'Creating...') : (isKo ? '방 만들기' : 'Create Room')}
@@ -698,25 +840,41 @@ const Lobby = ({
         </div>
 
         {/* Middle Column: Active Rooms Gallery */}
-        <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 flex flex-col h-[600px]">
+        <div
+          className={`rounded-3xl p-5 flex flex-col h-[600px] border ${
+            tossSkin ? tossSkin.card : "bg-slate-900 border-slate-800"
+          }`}
+        >
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-xl font-bold text-white flex items-center gap-2">
-              <Grid className="w-5 h-5 text-indigo-400" />
+            <h2
+              className={`text-xl font-bold flex items-center gap-2 ${
+                tossSkin ? tossSkin.heading : "text-white"
+              }`}
+            >
+              <Grid className={`w-5 h-5 ${tossSkin ? tossSkin.subtleIcon : "text-indigo-400"}`} />
               {isKo ? "진행 중인 퍼즐방" : "Active Puzzle Rooms"}
             </h2>
-            <button 
+            <button
               onClick={fetchRooms}
-              className="text-slate-400 hover:text-white transition-colors p-2 rounded-lg hover:bg-slate-800"
+              className={`transition-colors p-2 rounded-lg ${
+                tossSkin
+                  ? "text-slate-500 hover:text-[#2F6FE4] hover:bg-[#EAF2FF]"
+                  : "text-slate-400 hover:text-white hover:bg-slate-800"
+              }`}
               title={isKo ? "목록 새로고침" : "Refresh room list"}
             >
               <RefreshCw size={18} />
             </button>
           </div>
-          
+
           <div className="flex-1 overflow-y-auto pr-2 space-y-3 custom-scrollbar">
             {activeRooms.length === 0 ? (
-              <div className="h-full flex flex-col items-center justify-center text-slate-500">
-                <ImageIcon className="w-12 h-12 mb-3 opacity-20" />
+              <div
+                className={`h-full flex flex-col items-center justify-center ${
+                  tossSkin ? tossSkin.empty : "text-slate-500"
+                }`}
+              >
+                <ImageIcon className={`w-12 h-12 mb-3 ${tossSkin ? "opacity-30 text-[#2F6FE4]" : "opacity-20"}`} />
                 <p>{isKo ? "아직 진행 중인 방이 없습니다." : "No active rooms yet."}</p>
                 <p className="text-sm mt-1">{isKo ? "첫 번째 방을 만들어 보세요!" : "Be the first to create one!"}</p>
               </div>
@@ -740,68 +898,115 @@ const Lobby = ({
                 
                 return bTime - aTime;
               }).map((room) => (
-                <div 
+                <div
                   key={room.id}
-                  className="group bg-slate-950 border border-slate-800 hover:border-indigo-500/50 rounded-2xl overflow-hidden transition-all duration-300"
+                  className={`group rounded-2xl overflow-hidden transition-all duration-300 border ${
+                    tossSkin
+                      ? tossSkin.roomCard
+                      : "bg-slate-950 border-slate-800 hover:border-indigo-500/50"
+                  }`}
                 >
                   <div className="h-32 w-full overflow-hidden relative">
-                    <img 
-                      src={room.image_url} 
-                      alt="Puzzle preview" 
-                      className={`w-full h-full object-cover transition-transform duration-500 ${room.has_password ? 'blur-xl scale-125' : 'group-hover:scale-105'}`}
+                    <img
+                      src={room.image_url}
+                      alt="Puzzle preview"
+                      className={`w-full h-full object-cover transition-transform duration-500 ${room.has_password ? "blur-xl scale-125" : "group-hover:scale-105"}`}
                       referrerPolicy="no-referrer"
                     />
-                    <div className="absolute inset-0 bg-gradient-to-t from-slate-950 to-transparent" />
+                    <div
+                      className={`absolute inset-0 bg-gradient-to-t ${
+                        tossSkin ? "from-[#F4F8FF] via-transparent to-transparent" : "from-slate-950 to-transparent"
+                      }`}
+                    />
                     <div className="absolute bottom-3 left-3 right-3 flex justify-between items-end">
                       <div className="flex gap-2 items-center">
-                        <span className="bg-slate-900/80 backdrop-blur-sm text-xs font-medium text-white px-2 py-1 rounded-md border border-slate-700">
+                        <span
+                          className={`backdrop-blur-sm text-xs font-medium px-2 py-1 rounded-md border ${
+                            tossSkin
+                              ? "bg-white/90 text-slate-800 border-[#D9E8FF]"
+                              : "bg-slate-900/80 text-white border-slate-700"
+                          }`}
+                        >
                           {room.totalPieces || room.piece_count} {isKo ? "조각" : "Pieces"}
                         </span>
                         {room.has_password && (
-                          <span className="bg-slate-900/80 backdrop-blur-sm text-xs font-medium text-amber-400 px-2 py-1 rounded-md border border-slate-700 flex items-center gap-1">
+                          <span
+                            className={`backdrop-blur-sm text-xs font-medium text-amber-600 px-2 py-1 rounded-md border flex items-center gap-1 ${
+                              tossSkin ? "bg-white/90 border-[#D9E8FF]" : "bg-slate-900/80 border-slate-700 text-amber-400"
+                            }`}
+                          >
                             <Lock size={12} />
                           </span>
                         )}
                       </div>
-                      <span className="text-xs text-slate-300 flex items-center gap-1">
+                      <span
+                        className={`text-xs flex items-center gap-1 ${
+                          tossSkin ? "text-slate-600" : "text-slate-300"
+                        }`}
+                      >
                         <Users className="w-3 h-3" /> {isKo ? "생성자" : "Created by"} {room.creator_name}
                       </span>
                     </div>
                   </div>
                   {room.snappedCount !== undefined && room.totalPieces !== undefined && (
-                    <div className="w-full bg-slate-800 h-1.5 overflow-hidden">
-                      <div 
-                        className="bg-indigo-500 h-full transition-all duration-500"
+                    <div className={`w-full h-1.5 overflow-hidden ${tossSkin ? tossSkin.progress : "bg-slate-800"}`}>
+                      <div
+                        className={`h-full transition-all duration-500 ${
+                          tossSkin ? tossSkin.progressFill : "bg-indigo-500"
+                        }`}
                         style={{ width: `${Math.round((room.snappedCount / room.totalPieces) * 100)}%` }}
                       />
                     </div>
                   )}
-                  <div className="p-3 flex items-center justify-between">
+                  <div
+                    className={`p-3 flex items-center justify-between ${
+                      tossSkin ? "bg-white" : ""
+                    }`}
+                  >
                     <div className="text-left">
-                      <p className="text-sm font-medium text-slate-300 flex items-center gap-2">
+                      <p
+                        className={`text-sm font-medium flex items-center gap-2 ${
+                          tossSkin ? "text-slate-800" : "text-slate-300"
+                        }`}
+                      >
                         Room #{encodeRoomId(room.id)}
                         {room.currentPlayers !== undefined && room.max_players !== undefined && (
-                          <span className={`text-xs px-1.5 py-0.5 rounded-md ${room.currentPlayers >= room.max_players ? 'bg-red-500/20 text-red-400' : 'bg-emerald-500/20 text-emerald-400'}`}>
+                          <span
+                            className={`text-xs px-1.5 py-0.5 rounded-md ${
+                              room.currentPlayers >= room.max_players
+                                ? "bg-red-500/15 text-red-600"
+                                : tossSkin
+                                  ? "bg-[#EAF2FF] text-[#2F6FE4]"
+                                  : "bg-emerald-500/20 text-emerald-400"
+                            }`}
+                          >
                             {room.currentPlayers}/{room.max_players}
                           </span>
                         )}
                       </p>
                       {room.snappedCount !== undefined && room.totalPieces !== undefined && (
-                        <p className="text-xs text-indigo-400 font-medium mt-1">
-                          {Math.round((room.snappedCount / room.totalPieces) * 100)}% {isKo ? "완료" : "Complete"} ({room.snappedCount}/{room.totalPieces})
+                        <p
+                          className={`text-xs font-medium mt-1 ${
+                            tossSkin ? "text-[#2F6FE4]" : "text-indigo-400"
+                          }`}
+                        >
+                          {Math.round((room.snappedCount / room.totalPieces) * 100)}% {isKo ? "완료" : "Complete"} (
+                          {room.snappedCount}/{room.totalPieces})
                         </p>
                       )}
-                      <p className="text-xs text-slate-500 flex items-center mt-1">
+                      <p className={`text-xs flex items-center mt-1 ${tossSkin ? "text-slate-500" : "text-slate-500"}`}>
                         <Clock className="w-3 h-3 mr-1" />
                         {new Date(room.created_at).toLocaleDateString()}
-                        <span className="text-indigo-400 font-medium ml-1">
+                        <span className={`font-medium ml-1 ${tossSkin ? "text-[#2F6FE4]" : "text-indigo-400"}`}>
                           • {formatPlayTime(room.total_play_time_seconds || 0)}
                         </span>
                       </p>
                     </div>
                     <button
                       onClick={() => handleJoinSpecificRoom(room)}
-                      className="bg-indigo-500/10 hover:bg-indigo-500 text-indigo-400 hover:text-white px-4 py-2 rounded-xl text-sm font-medium transition-colors"
+                      className={`px-4 py-2 rounded-xl text-sm font-medium transition-colors ${
+                        tossSkin ? tossSkin.joinBtn : "bg-indigo-500/10 hover:bg-indigo-500 text-indigo-400 hover:text-white"
+                      }`}
                     >
                       {isKo ? "입장" : "Join"}
                     </button>
@@ -813,73 +1018,123 @@ const Lobby = ({
         </div>
 
         {/* Right Column: Completed Rooms Gallery */}
-        <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 flex flex-col h-[600px] md:col-span-2 lg:col-span-1">
+        <div
+          className={`rounded-3xl p-5 flex flex-col h-[600px] md:col-span-2 lg:col-span-1 border ${
+            tossSkin ? tossSkin.card : "bg-slate-900 border-slate-800"
+          }`}
+        >
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-xl font-bold text-white flex items-center gap-2">
-              <Trophy className="w-5 h-5 text-amber-400" />
+            <h2
+              className={`text-xl font-bold flex items-center gap-2 ${
+                tossSkin ? tossSkin.heading : "text-white"
+              }`}
+            >
+              <Trophy className={`w-5 h-5 ${tossSkin ? tossSkin.subtleIcon : "text-amber-400"}`} />
               {isKo ? "완료된 퍼즐방" : "Completed Puzzles"}
             </h2>
           </div>
-          
+
           <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
             {completedRooms.length === 0 ? (
-              <div className="h-full flex flex-col items-center justify-center text-slate-500">
-                <Trophy className="w-12 h-12 mb-3 opacity-20" />
+              <div
+                className={`h-full flex flex-col items-center justify-center ${
+                  tossSkin ? tossSkin.empty : "text-slate-500"
+                }`}
+              >
+                <Trophy className={`w-12 h-12 mb-3 ${tossSkin ? "opacity-30 text-[#2F6FE4]" : "opacity-20"}`} />
                 <p>{isKo ? "아직 완료된 퍼즐방이 없습니다." : "No completed puzzles yet."}</p>
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-1 gap-3">
                 {completedRooms.map((room) => (
-                  <div 
+                  <div
                     key={room.id}
-                    className="group bg-slate-950 border border-slate-800 hover:border-amber-500/50 rounded-2xl overflow-hidden transition-all duration-300"
+                    className={`group rounded-2xl overflow-hidden transition-all duration-300 border ${
+                      tossSkin
+                        ? `${tossSkin.roomCard} hover:border-[#2F6FE4]/45`
+                        : "bg-slate-950 border-slate-800 hover:border-amber-500/50"
+                    }`}
                   >
                     <div className="h-32 w-full overflow-hidden relative">
-                      <img 
-                        src={room.image_url} 
-                        alt="Puzzle preview" 
-                        className={`w-full h-full object-cover transition-transform duration-500 ${room.has_password ? 'blur-xl scale-125' : 'group-hover:scale-105'}`}
+                      <img
+                        src={room.image_url}
+                        alt="Puzzle preview"
+                        className={`w-full h-full object-cover transition-transform duration-500 ${room.has_password ? "blur-xl scale-125" : "group-hover:scale-105"}`}
                         referrerPolicy="no-referrer"
                       />
-                      <div className="absolute inset-0 bg-gradient-to-t from-slate-950 to-transparent" />
+                      <div
+                        className={`absolute inset-0 bg-gradient-to-t ${
+                          tossSkin ? "from-[#F4F8FF] via-transparent to-transparent" : "from-slate-950 to-transparent"
+                        }`}
+                      />
                       <div className="absolute bottom-3 left-3 right-3 flex justify-between items-end">
                         <div className="flex gap-2 items-center">
-                          <span className="bg-slate-900/80 backdrop-blur-sm text-xs font-medium text-white px-2 py-1 rounded-md border border-slate-700">
+                          <span
+                            className={`backdrop-blur-sm text-xs font-medium px-2 py-1 rounded-md border ${
+                              tossSkin
+                                ? "bg-white/90 text-slate-800 border-[#D9E8FF]"
+                                : "bg-slate-900/80 text-white border-slate-700"
+                            }`}
+                          >
                             {room.totalPieces || room.piece_count} {isKo ? "조각" : "Pieces"}
                           </span>
                           {room.has_password && (
-                            <span className="bg-slate-900/80 backdrop-blur-sm text-xs font-medium text-amber-400 px-2 py-1 rounded-md border border-slate-700 flex items-center gap-1">
+                            <span
+                              className={`backdrop-blur-sm text-xs font-medium px-2 py-1 rounded-md border flex items-center gap-1 ${
+                                tossSkin
+                                  ? "bg-white/90 text-amber-600 border-[#D9E8FF]"
+                                  : "bg-slate-900/80 text-amber-400 border-slate-700"
+                              }`}
+                            >
                               <Lock size={12} />
                             </span>
                           )}
                         </div>
-                        <span className="text-xs text-slate-300 flex items-center gap-1">
+                        <span
+                          className={`text-xs flex items-center gap-1 ${
+                            tossSkin ? "text-slate-600" : "text-slate-300"
+                          }`}
+                        >
                           <Users className="w-3 h-3" /> {isKo ? "생성자" : "Created by"} {room.creator_name}
                         </span>
                       </div>
                     </div>
-                    <div className="w-full bg-slate-800 h-1.5 overflow-hidden">
-                      <div className="bg-amber-500 h-full w-full" />
+                    <div className={`w-full h-1.5 overflow-hidden ${tossSkin ? tossSkin.progress : "bg-slate-800"}`}>
+                      <div className={`h-full w-full ${tossSkin ? tossSkin.completedBar : "bg-amber-500"}`} />
                     </div>
-                    <div className="p-3 flex items-center justify-between">
+                    <div className={`p-3 flex items-center justify-between ${tossSkin ? "bg-white" : ""}`}>
                       <div className="text-left">
-                        <p className="text-sm font-medium text-slate-300 flex items-center gap-2">
+                        <p
+                          className={`text-sm font-medium flex items-center gap-2 ${
+                            tossSkin ? "text-slate-800" : "text-slate-300"
+                          }`}
+                        >
                           Room #{encodeRoomId(room.id)}
                         </p>
-                        <p className="text-xs text-amber-400 font-medium mt-1">
+                        <p
+                          className={`text-xs font-medium mt-1 ${
+                            tossSkin ? tossSkin.completedAccent : "text-amber-400"
+                          }`}
+                        >
                           100% {isKo ? "완료" : "Complete"}
                         </p>
-                        <p className="text-xs text-slate-500 flex items-center mt-1">
+                        <p className={`text-xs flex items-center mt-1 ${tossSkin ? "text-slate-500" : "text-slate-500"}`}>
                           <Clock className="w-3 h-3 mr-1" />
                           {new Date(room.created_at).toLocaleDateString()}
-                          <span className="text-amber-400 font-medium ml-1">
+                          <span
+                            className={`font-medium ml-1 ${
+                              tossSkin ? tossSkin.completedAccent : "text-amber-400"
+                            }`}
+                          >
                             • {formatPlayTime(room.total_play_time_seconds || 0)}
                           </span>
                         </p>
                       </div>
                       <button
                         onClick={() => handleJoinSpecificRoom(room)}
-                        className="bg-amber-500/10 hover:bg-amber-500 text-amber-400 hover:text-white px-4 py-2 rounded-xl text-sm font-medium transition-colors"
+                        className={`px-4 py-2 rounded-xl text-sm font-medium transition-colors ${
+                          tossSkin ? tossSkin.viewBtn : "bg-amber-500/10 hover:bg-amber-500 text-amber-400 hover:text-white"
+                        }`}
                       >
                         {isKo ? "보기" : "View"}
                       </button>
@@ -898,13 +1153,20 @@ const Lobby = ({
         images={publicImages}
         selectedUrl={imageUrl}
         onSelect={setImageUrl}
+        tossStyling={!!tossUi}
       />
 
       {showRoomFullModal && roomFullInfo && (
         <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="w-full max-w-sm rounded-2xl border border-slate-700 bg-slate-900 p-5 text-white shadow-2xl">
+          <div
+            className={`w-full max-w-sm rounded-2xl border p-5 shadow-2xl ${
+              tossUi
+                ? "border-[#D9E8FF] bg-white text-slate-900"
+                : "border-slate-700 bg-slate-900 text-white"
+            }`}
+          >
             <h3 className="text-base font-bold mb-2">방 입장 불가</h3>
-            <p className="text-sm text-slate-300 leading-relaxed">
+            <p className={`text-sm leading-relaxed ${tossUi ? "text-slate-600" : "text-slate-300"}`}>
               Room #{roomFullInfo.roomCode} 는 현재 정원이 가득 찼습니다.
               <br />
               ({roomFullInfo.current}/{roomFullInfo.max})
@@ -913,7 +1175,9 @@ const Lobby = ({
               <button
                 type="button"
                 onClick={() => setShowRoomFullModal(false)}
-                className="rounded-lg bg-indigo-500 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-600 transition-colors"
+                className={`rounded-lg px-4 py-2 text-sm font-medium text-white transition-colors ${
+                  tossUi ? "bg-[#3182F6] hover:bg-[#2563EB] shadow-sm" : "bg-indigo-500 hover:bg-indigo-600"
+                }`}
               >
                 확인
               </button>
@@ -924,13 +1188,15 @@ const Lobby = ({
 
       {onOpenTerms && (
         <footer
-          className="w-full max-w-6xl mx-auto mt-8 pt-4 border-t border-slate-800/80 text-center box-border"
+          className={`w-full max-w-6xl mx-auto mt-8 pt-4 text-center box-border border-t ${
+            tossSkin ? tossSkin.footerBorder : "border-slate-800/80"
+          }`}
           style={tossUi ? tossContentPadX : undefined}
         >
           <button
             type="button"
             onClick={onOpenTerms}
-            className="text-xs text-slate-500 hover:text-indigo-400 transition-colors"
+            className={`text-xs transition-colors ${tossSkin ? tossSkin.footerLink : "text-slate-500 hover:text-indigo-400"}`}
           >
             서비스 이용약관
           </button>

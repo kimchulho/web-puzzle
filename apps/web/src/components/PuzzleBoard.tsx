@@ -1,4 +1,11 @@
-import React, { type MutableRefObject, useEffect, useRef, useState } from 'react';
+import React, {
+  type CSSProperties,
+  type MutableRefObject,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react';
 import * as PIXI from 'pixi.js';
 import { throttle } from 'lodash';
 import { Clock, Users, Trophy, ChevronLeft, X, Palette, LayoutGrid, Zap, Heart, Image as ImageIcon, Bot, Maximize, Minimize, RotateCcw, Share2, Check, Plus, Minus } from 'lucide-react';
@@ -9,11 +16,81 @@ import { supabase } from '../lib/supabaseClient';
 import { encodeRoomId } from '../lib/roomCode';
 
 const SNAP_THRESHOLD = 30;
+/** 와이드 툴바–퍼즐 사이 빈 줄(측정·라운딩·DP) 보정: 퍼즐 inset 을 살짝 줄임 */
+const TOSS_WIDE_PUZZLE_INSET_TRIM_PX = 3;
+const TOSS_WIDE_TOOLBAR_WIDTH_FALLBACK_PX = 44;
+const MINI_PAD_VISIBLE_STORAGE_KEY = 'puzzle_show_mini_pad';
+const TOSS_WIDE_MODE_STORAGE_KEY = 'puzzle_toss_wide_mode';
+const readStoredBool = (key: string, fallback: boolean) => {
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw === '1') return true;
+    if (raw === '0') return false;
+  } catch {
+    // Ignore storage access errors.
+  }
+  return fallback;
+};
 const isBotLikeUser = (name: unknown) =>
   typeof name === 'string' && /(bot|봇)/i.test(name.trim());
 
 /** Pixi `RendererType.CANVAS` (pixi.js `rendering/renderers/types.d.ts`) */
 const PIXI_RENDERER_TYPE_CANVAS = 4;
+
+const PUZZLE_LOADING_STAGES_KO = [
+  "종이 가져오는 중",
+  "인쇄하는 중",
+  "합지 하는 중",
+  "목형 만드는 중",
+  "프레스로 찍는 중",
+  "퍼즐 조각 터는 중",
+  "퍼즐 배송중",
+] as const;
+
+const PUZZLE_LOADING_STAGES_EN = [
+  "Fetching paper…",
+  "Printing…",
+  "Mounting sheets…",
+  "Cutting the die…",
+  "Running the press…",
+  "Punching pieces…",
+  "Out for delivery…",
+] as const;
+
+function puzzleLoadingStageIndex(progress: number, stageCount: number) {
+  if (progress >= 100) return stageCount - 1;
+  return Math.min(stageCount - 1, Math.floor((progress / 100) * stageCount));
+}
+
+function PuzzleLoadingSpinner({ toss }: { toss: boolean }) {
+  const track = toss ? "#EAF2FF" : "rgba(148, 163, 184, 0.4)";
+  const head = toss ? "#3182F6" : "#a5b4fc";
+  return (
+    <svg width="40" height="40" viewBox="0 0 40 40" style={{ display: "block" }} aria-hidden>
+      <circle cx="20" cy="20" r="16" fill="none" stroke={track} strokeWidth="3" />
+      <g>
+        <animateTransform
+          attributeName="transform"
+          type="rotate"
+          from="0 20 20"
+          to="360 20 20"
+          dur="0.85s"
+          repeatCount="indefinite"
+        />
+        <circle
+          cx="20"
+          cy="20"
+          r="16"
+          fill="none"
+          stroke={head}
+          strokeWidth="3"
+          strokeLinecap="round"
+          strokeDasharray="25 100"
+        />
+      </g>
+    </svg>
+  );
+}
 
 export default function PuzzleBoard({
   roomId,
@@ -66,6 +143,8 @@ export default function PuzzleBoard({
   const [playerCount, setPlayerCount] = useState(1);
   const [playTime, setPlayTime] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
+  /** 0–100, 휴리스틱(실제 시간과 다를 수 있음) */
+  const [loadProgress, setLoadProgress] = useState(0);
   const [imageLoadError, setImageLoadError] = useState<string | null>(null);
   const [isColorBotLoading, setIsColorBotLoading] = useState(false);
   const [scores, setScores] = useState<{username: string, score: number}[]>([]);
@@ -76,6 +155,8 @@ export default function PuzzleBoard({
   const [showMosaicModal, setShowMosaicModal] = useState(false);
   const [mosaicError, setMosaicError] = useState<string | null>(null);
   const [showFullImage, setShowFullImage] = useState(false);
+  const [showRotateConfirm, setShowRotateConfirm] = useState(false);
+  const [showMiniPad, setShowMiniPad] = useState(() => readStoredBool(MINI_PAD_VISIBLE_STORAGE_KEY, true));
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [mosaicUrl, setMosaicUrl] = useState("https://ewbjogsolylcbfmpmyfa.supabase.co/storage/v1/object/public/checki/2.jpg");
   const [mosaicQuick, setMosaicQuick] = useState(false);
@@ -85,6 +166,11 @@ export default function PuzzleBoard({
   const isKo = locale === 'ko';
   const [isCopied, setIsCopied] = useState(false);
   const [isTossWideMode, setIsTossWideMode] = useState(false);
+  const tossWidePrefHydratedRef = useRef(false);
+  const skipNextTossWideSaveRef = useRef(false);
+  /** 가로(와이드) 툴바 getBoundingClientRect().width (회전 후 화면상 두께, CSS px). 0 = 아직 측정 전 */
+  const [tossWideToolbarWidth, setTossWideToolbarWidth] = useState(0);
+  const tossWideToolbarMeasureRef = useRef<HTMLDivElement | null>(null);
 
   const handleShareLink = () => {
     const url = `${window.location.origin}/?room=${encodeRoomId(roomId)}`;
@@ -136,6 +222,38 @@ export default function PuzzleBoard({
     document.addEventListener('fullscreenchange', handleFullscreenChange);
     return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
   }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(MINI_PAD_VISIBLE_STORAGE_KEY, showMiniPad ? '1' : '0');
+    } catch {
+      // noop
+    }
+  }, [showMiniPad]);
+
+  useEffect(() => {
+    if (!isTossMode) {
+      tossWidePrefHydratedRef.current = false;
+      skipNextTossWideSaveRef.current = false;
+      return;
+    }
+    skipNextTossWideSaveRef.current = true;
+    setIsTossWideMode(readStoredBool(TOSS_WIDE_MODE_STORAGE_KEY, false));
+    tossWidePrefHydratedRef.current = true;
+  }, [isTossMode]);
+
+  useEffect(() => {
+    if (!isTossMode || !tossWidePrefHydratedRef.current) return;
+    if (skipNextTossWideSaveRef.current) {
+      skipNextTossWideSaveRef.current = false;
+      return;
+    }
+    try {
+      localStorage.setItem(TOSS_WIDE_MODE_STORAGE_KEY, isTossWideMode ? '1' : '0');
+    } catch {
+      // noop
+    }
+  }, [isTossMode, isTossWideMode]);
 
   const toggleFullscreen = async () => {
     try {
@@ -197,8 +315,26 @@ export default function PuzzleBoard({
       }
     : undefined;
 
-  /** 리더보드 패널: 상단 툴바 높이 + 시스템/호스트 상단 inset */
-  const leaderboardOffset = hostWebViewPadding
+  useLayoutEffect(() => {
+    if (!isTossMode || !isTossWideMode) return;
+    const el = tossWideToolbarMeasureRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const update = () => {
+      const w = el.getBoundingClientRect().width;
+      if (w > 0) setTossWideToolbarWidth(w);
+    };
+    const ro = new ResizeObserver(update);
+    ro.observe(el, { box: "border-box" });
+    update();
+    window.addEventListener("resize", update);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", update);
+    };
+  }, [isTossMode, isTossWideMode]);
+
+  /** 리더보드 패널: Toss 모드는 클래스 위치를 그대로 쓰고, 웹만 기본 오프셋 사용 */
+  const leaderboardOffset = !isTossMode && hostWebViewPadding
     ? {
         top: 88 + hostWebViewPadding.top,
         right: 16 + hostWebViewPadding.right,
@@ -272,6 +408,19 @@ export default function PuzzleBoard({
     const initPixi = async () => {
       try {
         setIsLoading(true);
+        setLoadProgress(0);
+
+        let progRaf: number | null = null;
+        let progPending = 0;
+        const bumpProgress = (p: number) => {
+          progPending = Math.max(progPending, Math.min(100, p));
+          if (progRaf != null) return;
+          progRaf = requestAnimationFrame(() => {
+            progRaf = null;
+            if (isMounted) setLoadProgress(progPending);
+          });
+        };
+        bumpProgress(2);
 
         // Update last active time when entering a room
         if (user && user.id) {
@@ -306,6 +455,7 @@ export default function PuzzleBoard({
         }
 
         appInstance = app;
+        bumpProgress(14);
         // 별도 캔버스의 WebGL 프로브와 실제 PIXI 렌더러가 다를 수 있음(예: WebGL 실패 후 Canvas).
         // 떨어지는 인트로는 alpha=0에서 시작하므로, Canvas일 때는 즉시 보이게 한다.
         const isCanvasRenderer = app.renderer.type === PIXI_RENDERER_TYPE_CANVAS;
@@ -357,7 +507,6 @@ export default function PuzzleBoard({
 
         let selectedCluster: Set<number> | null = null;
         let selectedOffsets = new Map<number, {x: number, y: number}>();
-        let selectedShiftY = 0;
         let isDraggingSelected = false;
         let selectedMoved = false;
         let selectedTouchStartPos = { x: 0, y: 0 };
@@ -367,6 +516,7 @@ export default function PuzzleBoard({
         let isDragging = false;
         let dragCluster = new Set<number>();
         let dragOffsets = new Map<number, {x: number, y: number}>();
+        /** 터치 팻핑거: 로컬 -Y로 살짝 띄움(월드가 -90°여도 조각 좌표는 퍼즐 판 기준이라 화면에서는 세로 방향 이동). */
         let currentShiftY = 0;
         let touchStartPos = { x: 0, y: 0 };
         let isTouchDraggingPiece = false;
@@ -425,7 +575,9 @@ export default function PuzzleBoard({
         app.stage.on('globalpointermove', (e) => {
           pointerGlobalPos = { x: e.global.x, y: e.global.y };
           
-          if (activeTouches <= 1) {
+          const isPadDragging =
+            Boolean(miniPadDragRef.current?.isDragging) || Boolean(zoomPadDragRef.current?.isDragging);
+          if (activeTouches <= 1 && !isPadDragging) {
             const now = Date.now();
             if (now - lastCursorBroadcast > 100) {
               lastCursorBroadcast = now;
@@ -530,8 +682,8 @@ export default function PuzzleBoard({
             if (!isTouchDraggingPiece && (Math.abs(dx) > 10 || Math.abs(dy) > 10)) {
               isTouchDraggingPiece = true;
               topZIndex++;
-              currentShiftY = e.pointerType === 'touch' && !(isTossMode && isTossWideMode) ? pieceHeight * 1.6 : 0;
-              
+              currentShiftY = e.pointerType === 'touch' ? pieceHeight * 1.6 : 0;
+
               if (selectedCluster) {
                 selectedCluster.forEach(id => {
                   const p = pieces.current.get(id)!;
@@ -1057,7 +1209,8 @@ export default function PuzzleBoard({
         }
         
         objectUrlRef.current = objectUrl;
-        
+        bumpProgress(22);
+
         let texture;
         try {
           texture = PIXI.Texture.from(img);
@@ -1111,6 +1264,7 @@ export default function PuzzleBoard({
         } catch (e) {
           console.error('Failed to calculate average color', e);
         }
+        bumpProgress(30);
 
         let TARGET_PIECE_COUNT = Math.min(1000, pieceCount);
         const aspectRatio = texture.width / texture.height;
@@ -1130,6 +1284,41 @@ export default function PuzzleBoard({
         
         const PIECE_COUNT = GRID_COLS * GRID_ROWS;
         setTotalPieces(PIECE_COUNT);
+
+        // 화면 해상도는 유지하고, 퍼즐 소스 이미지만 미리 축소해 조각/베벨 생성 비용을 낮춘다.
+        const PREPROCESS_SOURCE_PX_PER_PIECE = 100;
+        const preprocessTargetWidth = Math.max(1, Math.round(GRID_COLS * PREPROCESS_SOURCE_PX_PER_PIECE));
+        const preprocessTargetHeight = Math.max(1, Math.round(GRID_ROWS * PREPROCESS_SOURCE_PX_PER_PIECE));
+        const preprocessScale = Math.min(
+          1,
+          preprocessTargetWidth / Math.max(1, img.width),
+          preprocessTargetHeight / Math.max(1, img.height),
+        );
+        if (preprocessScale < 0.999) {
+          const resizedWidth = Math.max(1, Math.round(img.width * preprocessScale));
+          const resizedHeight = Math.max(1, Math.round(img.height * preprocessScale));
+          const preprocessCanvas = document.createElement('canvas');
+          preprocessCanvas.width = resizedWidth;
+          preprocessCanvas.height = resizedHeight;
+          const preprocessCtx = preprocessCanvas.getContext('2d');
+          if (preprocessCtx) {
+            preprocessCtx.imageSmoothingEnabled = true;
+            preprocessCtx.imageSmoothingQuality = 'high';
+            preprocessCtx.drawImage(img, 0, 0, resizedWidth, resizedHeight);
+            const oldTexture = texture;
+            texture = PIXI.Texture.from(preprocessCanvas);
+            mainTextureRef.current = texture;
+            oldTexture.destroy(true);
+            if (import.meta.env.DEV) {
+              console.info('[Puzzle preprocess]', {
+                original: `${img.width}x${img.height}`,
+                preprocessed: `${resizedWidth}x${resizedHeight}`,
+                pxPerPiece: PREPROCESS_SOURCE_PX_PER_PIECE,
+              });
+            }
+          }
+        }
+        bumpProgress(34);
 
         const TARGET_PIECE_SIZE = 100;
         const pieceWidth = TARGET_PIECE_SIZE;
@@ -1211,6 +1400,7 @@ export default function PuzzleBoard({
         boardBg.stroke({ width: 2, color: 0x000000, alpha: 0.5 });
         boardBg.zIndex = -1;
         world.addChild(boardBg);
+        bumpProgress(38);
 
         // 탭(돌기) 방향 미리 계산
         const horizontalTabs: number[][] = [];
@@ -1230,6 +1420,7 @@ export default function PuzzleBoard({
           }
           verticalTabs.push(rowTabs);
         }
+        bumpProgress(42);
 
         const drawEdge = (g: PIXI.Graphics, x1: number, y1: number, x2: number, y2: number, tabType: number, tabDepth: number) => {
           if (tabType === 0) {
@@ -1325,8 +1516,41 @@ export default function PuzzleBoard({
 
         const zoomToCompletedPuzzle = (animate = true) => {
           const maxDim = Math.max(boardWidth, boardHeight);
-          const boundingBoxSize = maxDim * 1.1; // 좀 더 타이트하게 줌인
-          const targetScale = Math.min(app.screen.width / boundingBoxSize, app.screen.height / boundingBoxSize, 1);
+          const boundingBoxSize = maxDim * 1.1; // 웹·토스 와이드 공통 완성 줌 (가로 긴 퍼즐도 동일 기준)
+          const targetScale = Math.min(
+            app.screen.width / boundingBoxSize,
+            app.screen.height / boundingBoxSize,
+            1,
+          );
+
+          // 토스 와이드: pivot + rotation(-90°). targetX/Y(피벗 0 가정) 대신 보드 중심 = 캔버스 중심.
+          if (isTossMode && isTossWideMode) {
+            const boardCx = boardStartX + boardWidth / 2;
+            const boardCy = boardStartY + boardHeight / 2;
+            world.pivot.set(boardCx, boardCy);
+            world.position.set(app.screen.width / 2, app.screen.height / 2);
+            world.rotation = -Math.PI / 2;
+
+            if (!animate) {
+              world.scale.set(targetScale);
+              return;
+            }
+
+            const startScale = world.scale.x;
+            let progress = 0;
+            const animateZoomWide = () => {
+              progress += 0.02;
+              if (progress >= 1) {
+                world.scale.set(targetScale);
+                app.ticker.remove(animateZoomWide);
+                return;
+              }
+              const ease = progress < 0.5 ? 2 * progress * progress : -1 + (4 - 2 * progress) * progress;
+              world.scale.set(startScale + (targetScale - startScale) * ease);
+            };
+            app.ticker.add(animateZoomWide);
+            return;
+          }
           const targetX = (app.screen.width - boardWidth * targetScale) / 2;
           const targetY = (app.screen.height - boardHeight * targetScale) / 2;
 
@@ -2767,6 +2991,7 @@ export default function PuzzleBoard({
         gatherByColorRef.current = gatherByColor;
         createMosaicFromImageRef.current = createMosaicFromImage;
 
+        bumpProgress(46);
         const { data: existingPieces } = await supabase.from('pixi_pieces').select('*').eq('room_id', roomId);
         const hasExistingState = existingPieces && existingPieces.length > 0;
         const pieceStates = new Map<number, any>();
@@ -2890,11 +3115,13 @@ export default function PuzzleBoard({
           }
         }
 
+        bumpProgress(50);
         let initialPlacedCount = 0;
         for (let i = 0; i < PIECE_COUNT; i++) {
-          // 저사양 기기 최적화: 메인 스레드가 멈추지 않도록 일정 주기마다 비동기 대기(Yield)
-          if (i > 0 && i % 20 === 0) {
-            await new Promise(resolve => setTimeout(resolve, 0));
+          // 저사양 기기: rAF로 양보해 로딩 스피너·진행률이 끊기지 않게 함
+          if (i > 0 && i % 5 === 0) {
+            bumpProgress(50 + (49 * i) / Math.max(1, PIECE_COUNT));
+            await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
           }
 
           const col = i % GRID_COLS;
@@ -3143,7 +3370,7 @@ export default function PuzzleBoard({
               targetPositions.delete(id);
             });
             currentShiftY = 0;
-            
+
             // On both touch and mouse, we don't start dragging immediately.
             // We wait for movement to distinguish between tap and drag.
             topZIndex++;
@@ -3156,6 +3383,8 @@ export default function PuzzleBoard({
           world.addChild(pieceContainer);
           pieces.current.set(i, pieceContainer);
         }
+
+        bumpProgress(99);
 
         if (fallingPieces.length > 0) {
           const fallTicker = () => {
@@ -3245,7 +3474,8 @@ export default function PuzzleBoard({
           // Even if not all are marked as locked in DB, check if their positions are correct
           checkCompletion();
         }
-        
+
+        bumpProgress(100);
         setIsLoading(false);
 
         // 3. Supabase Realtime 수신
@@ -3434,41 +3664,56 @@ export default function PuzzleBoard({
       if (playTimeInterval) clearInterval(playTimeInterval);
       isBotRunningRef.current = false;
       isColorBotRunningRef.current = false;
-      if (mainTextureRef.current) {
-        mainTextureRef.current.destroy(true);
-        mainTextureRef.current = null;
-      }
-      if (appInstance) {
-        appInstance.destroy(true);
-      }
+      const tex = mainTextureRef.current;
+      const appInst = appInstance;
+      const objUrl = objectUrlRef.current;
+      mainTextureRef.current = null;
+      appInstance = null;
+      objectUrlRef.current = null;
       if (channelRef.current) {
         // Presence ghost를 줄이기 위해 untrack 후 unsubscribe
         channelRef.current.untrack?.();
         channelRef.current.unsubscribe();
       }
-      if (objectUrlRef.current) {
-        URL.revokeObjectURL(objectUrlRef.current);
-        objectUrlRef.current = null;
+      const runHeavyTeardown = () => {
+        try {
+          tex?.destroy(true);
+        } catch {
+          /* noop */
+        }
+        try {
+          appInst?.destroy(true);
+        } catch {
+          /* noop */
+        }
+        if (objUrl) URL.revokeObjectURL(objUrl);
+      };
+      // 로비 등 다음 화면이 먼저 그려진 뒤 WebGL/텍스처 정리(메인 스레드 블로킹 완화)
+      if (typeof requestAnimationFrame !== "undefined") {
+        requestAnimationFrame(() => requestAnimationFrame(runHeavyTeardown));
+      } else {
+        setTimeout(runHeavyTeardown, 0);
       }
     };
   }, [imageUrl, isTossMode, isTossWideMode]);
 
   const handleMiniPadPointerDown = (e: React.PointerEvent) => {
+    e.preventDefault();
     miniPadDragRef.current = { x: e.clientX, y: e.clientY, isDragging: true, moved: false };
     e.currentTarget.setPointerCapture(e.pointerId);
   };
 
   const handleZoomPadPointerDown = (e: React.PointerEvent) => {
-    // 와이드 모드에서는 요소가 -90deg 회전되므로 clientY를 기준축으로 사용
-    zoomPadDragRef.current = { x: isTossWideMode ? e.clientY : e.clientX, isDragging: true };
+    // 토스 와이드(-90deg 회전)에서는 clientY를 기준축으로 사용
+    zoomPadDragRef.current = { x: isTossMode && isTossWideMode ? e.clientY : e.clientX, isDragging: true };
     e.currentTarget.setPointerCapture(e.pointerId);
   };
 
   const handleZoomPadPointerMove = (e: React.PointerEvent) => {
     if (!zoomPadDragRef.current?.isDragging || !worldRef.current) return;
     
-    // 와이드 모드(-90deg 회전): clientY 사용, 방향 반전(+ 버튼이 아래쪽으로 내려가므로)
-    const dx = isTossWideMode
+    const isTossWide = isTossMode && isTossWideMode;
+    const dx = isTossWide
       ? -(e.clientY - zoomPadDragRef.current.x)
       : e.clientX - zoomPadDragRef.current.x;
     if (Math.abs(dx) > 0) {
@@ -3493,7 +3738,7 @@ export default function PuzzleBoard({
       world.x = centerX - worldX * world.scale.x;
       world.y = centerY - worldY * world.scale.y;
       
-      zoomPadDragRef.current.x = isTossWideMode ? e.clientY : e.clientX;
+      zoomPadDragRef.current.x = isTossWide ? e.clientY : e.clientX;
     }
   };
 
@@ -3523,10 +3768,6 @@ export default function PuzzleBoard({
 
   const handleMiniPadPointerUp = (e: React.PointerEvent) => {
     if (!miniPadDragRef.current) return;
-    if (!miniPadDragRef.current.moved) {
-      // It was a click/tap
-      setShowFullImage(true);
-    }
     miniPadDragRef.current = null;
     e.currentTarget.releasePointerCapture(e.pointerId);
   };
@@ -3541,11 +3782,46 @@ export default function PuzzleBoard({
       }
     : { backgroundColor: bgColor };
 
+  const tossWidePuzzleInsetPx =
+    isTossMode && isTossWideMode
+      ? Math.max(
+          1,
+          (tossWideToolbarWidth > 0
+            ? tossWideToolbarWidth
+            : TOSS_WIDE_TOOLBAR_WIDTH_FALLBACK_PX) - TOSS_WIDE_PUZZLE_INSET_TRIM_PX,
+        )
+      : undefined;
+
+  /** 토스 와이드: 툴바·캔버스와 동일한 -90°(물리 화면은 세로인 채 가로 레이아웃) */
+  const tossWideFullscreenOverlayStyle: CSSProperties | undefined =
+    isTossMode && isTossWideMode
+      ? {
+          position: 'absolute',
+          width: '100vh',
+          height: '100vw',
+          left: '50%',
+          top: '50%',
+          transform: 'translate(-50%, -50%) rotate(-90deg)',
+          transformOrigin: 'center center',
+        }
+      : undefined;
+
+  const puzzleLoadingStages = isKo ? PUZZLE_LOADING_STAGES_KO : PUZZLE_LOADING_STAGES_EN;
+  const puzzleLoadingSubtitle =
+    puzzleLoadingStages[puzzleLoadingStageIndex(loadProgress, puzzleLoadingStages.length)];
+  const loadBarTrack = isTossMode ? "#EAF2FF" : "rgba(148, 163, 184, 0.35)";
+  const loadBarFill = isTossMode ? "#3182F6" : "#818cf8";
+  const loadPct = Math.min(100, Math.round(loadProgress));
 
   return (
     <div className="w-full h-full relative" style={boardFrameStyle}>
       {imageLoadError && (
-        <div className="absolute inset-0 z-[100] flex flex-col items-center justify-center bg-slate-900/90 backdrop-blur-sm text-white p-4 text-center">
+        <div
+          className={`z-[100] flex flex-col items-center justify-center bg-slate-900/90 backdrop-blur-sm text-white p-4 text-center ${
+            tossWideFullscreenOverlayStyle ? 'absolute' : 'absolute inset-0'
+          }`}
+          style={tossWideFullscreenOverlayStyle}
+        >
           <div className="w-16 h-16 bg-red-500/20 rounded-full flex items-center justify-center mb-4">
             <X className="w-8 h-8 text-red-500" />
           </div>
@@ -3560,16 +3836,71 @@ export default function PuzzleBoard({
         </div>
       )}
       {isLoading && !imageLoadError && (
-        <div className="absolute inset-0 z-[100] flex flex-col items-center justify-center bg-slate-900/90 backdrop-blur-sm text-white">
-          <div className="w-16 h-16 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mb-4"></div>
-          <h2 className="text-xl font-bold animate-pulse">{isKo ? "퍼즐 불러오는 중..." : "Loading Puzzle..."}</h2>
-          <p className="text-slate-400 mt-2">Preparing pieces and board</p>
+        <div
+          className={`z-[100] flex flex-col items-center justify-center ${
+            isTossMode
+              ? "bg-[#F4F8FF]/95 backdrop-blur-md text-slate-900"
+              : "bg-slate-900/90 backdrop-blur-sm text-white"
+          } ${tossWideFullscreenOverlayStyle ? "absolute" : "absolute inset-0"}`}
+          style={tossWideFullscreenOverlayStyle}
+        >
+          {isTossMode ? (
+            <div className="mb-5 flex h-[72px] w-[72px] items-center justify-center rounded-2xl border border-[#D9E8FF] bg-white shadow-[0_8px_24px_rgba(47,111,228,0.1)]">
+              <PuzzleLoadingSpinner toss />
+            </div>
+          ) : (
+            <div className="mb-4 flex h-16 w-16 items-center justify-center">
+              <PuzzleLoadingSpinner toss={false} />
+            </div>
+          )}
+          <h2
+            className={
+              isTossMode
+                ? "text-lg font-semibold tracking-tight text-slate-900"
+                : "text-xl font-bold text-white"
+            }
+          >
+            {isKo ? "퍼즐 불러오는 중" : "Loading puzzle"}
+          </h2>
+          <p
+            className={`mt-1.5 text-center text-sm px-6 max-w-sm min-h-[1.25rem] transition-opacity duration-200 ${
+              isTossMode ? "text-slate-500" : "text-slate-400"
+            }`}
+          >
+            {puzzleLoadingSubtitle}
+          </p>
+          <div className="mt-4 w-[min(280px,85vw)] space-y-1.5">
+            <div
+              className="h-2 w-full overflow-hidden rounded-full"
+              style={{ backgroundColor: loadBarTrack }}
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={loadPct}
+              aria-label={isKo ? "불러오기 진행률" : "Loading progress"}
+            >
+              <div
+                className="h-full rounded-full transition-[width] duration-200 ease-out"
+                style={{ width: `${loadPct}%`, backgroundColor: loadBarFill }}
+              />
+            </div>
+            <p
+              className={`text-center text-xs font-medium tabular-nums ${
+                isTossMode ? "text-slate-500" : "text-slate-400"
+              }`}
+            >
+              {loadPct}%
+            </p>
+          </div>
         </div>
       )}
       <div
-        className={`absolute top-0 left-0 w-full z-50 backdrop-blur-sm p-1 sm:p-1.5 items-center justify-between gap-1 sm:gap-1.5 text-white ${
+        ref={tossWideToolbarMeasureRef}
+        className={`absolute top-0 left-0 w-full z-50 backdrop-blur-sm items-center justify-between gap-1 sm:gap-1.5 text-white ${
+          isTossMode && isTossWideMode ? "" : "p-1 sm:p-1.5"
+        } ${
           isTossMode && isTossWideMode
-            ? "flex flex-row bg-white text-[#2F6FE4] px-2 pt-0 pb-1.5"
+            ? "flex flex-row bg-white text-[#2F6FE4] gap-2"
             : isTossMode
             ? "flex flex-col sm:flex-row bg-white text-[#2F6FE4] px-1.5 pt-0 pb-1.5 sm:px-2 sm:pt-0 sm:pb-2"
             : "flex flex-col sm:flex-row bg-slate-900/80 border-b border-slate-700/50"
@@ -3582,6 +3913,16 @@ export default function PuzzleBoard({
                 width: "100vh",
                 transformOrigin: "top left",
                 transform: "rotate(-90deg) translateX(-100%)",
+                boxSizing: "border-box",
+                // 회전 전 박스 짧은 변: 상·하 여백 동일 (하단과 같은 8px)
+                paddingTop: 8,
+                paddingBottom: 8,
+                paddingLeft: hostWebViewPadding
+                  ? Math.max(hostWebViewPadding.left + 4, Math.max(0, hostWebViewPadding.right - 28))
+                  : 12,
+                paddingRight: hostWebViewPadding
+                  ? Math.max(hostWebViewPadding.left + 4, Math.max(0, hostWebViewPadding.right - 28))
+                  : 12,
               }
             : (isTossMode ? tossToolbarPadding : hostToolbarPadding)
         }
@@ -3877,6 +4218,50 @@ export default function PuzzleBoard({
             )}
           </div>
 
+          {isTossMode ? (
+            <>
+              <button
+                aria-label={showMiniPad ? "미니 패드 숨기기" : "미니 패드 보이기"}
+                onClick={() => setShowMiniPad((v) => !v)}
+                className={`inline-flex items-center justify-center h-8 w-10 rounded-lg ${
+                  showMiniPad ? "bg-[#EAF2FF] text-[#2F6FE4]" : "bg-[#F4F8FF] text-[#7AA6F2]"
+                }`}
+                title={isKo ? (showMiniPad ? "미니 패드 숨기기" : "미니 패드 보이기") : (showMiniPad ? "Hide mini pad" : "Show mini pad")}
+              >
+                <LayoutGrid size={14} />
+              </button>
+              <button
+                aria-label={isKo ? "퍼즐 이미지 보기" : "View puzzle image"}
+                onClick={() => setShowFullImage(true)}
+                className="inline-flex items-center justify-center h-8 w-10 rounded-lg bg-[#F4F8FF] text-[#2F6FE4]"
+                title={isKo ? "퍼즐 이미지 보기" : "View puzzle image"}
+              >
+                <ImageIcon size={14} />
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                onClick={() => setShowMiniPad((v) => !v)}
+                className={`flex items-center justify-center w-7 h-7 rounded-md border transition-colors shrink-0 ${
+                  showMiniPad
+                    ? "bg-blue-500/20 border-blue-500/50 text-blue-400"
+                    : "bg-slate-800/50 border-slate-700/50 text-slate-400 hover:bg-slate-700"
+                }`}
+                title={isKo ? (showMiniPad ? "미니 패드 숨기기" : "미니 패드 보이기") : (showMiniPad ? "Hide mini pad" : "Show mini pad")}
+              >
+                <LayoutGrid size={14} />
+              </button>
+              <button
+                onClick={() => setShowFullImage(true)}
+                className="flex items-center justify-center w-7 h-7 rounded-md border transition-colors shrink-0 bg-slate-800/50 border-slate-700/50 text-slate-400 hover:bg-slate-700 hover:text-white"
+                title={isKo ? "퍼즐 이미지 보기" : "View puzzle image"}
+              >
+                <ImageIcon size={14} />
+              </button>
+            </>
+          )}
+
           {!hostLeaderboardToggleRef ? (
             <button
               onClick={() => setShowLeaderboard(!showLeaderboard)}
@@ -3895,7 +4280,7 @@ export default function PuzzleBoard({
             type="button"
             onClick={() => {
               if (isTossMode) {
-                setIsTossWideMode((prev) => !prev);
+                setShowRotateConfirm(true);
                 return;
               }
               void handleOrientationButton();
@@ -3924,41 +4309,77 @@ export default function PuzzleBoard({
 
       {showLeaderboard && (
         <div
-          className={`absolute z-50 w-56 bg-slate-800 border border-slate-700 rounded-xl overflow-hidden animate-in fade-in slide-in-from-top-4 duration-200 ${leaderboardOffset ? "" : "top-20 right-4"}`}
-          style={leaderboardOffset}
+          className={`z-50 w-56 rounded-xl overflow-hidden animate-in fade-in slide-in-from-top-4 duration-200 ${
+            isTossMode
+              ? "bg-white border border-[#D9E8FF] shadow-[0_10px_24px_rgba(47,111,228,0.14)]"
+              : "bg-slate-800 border border-slate-700"
+          } ${
+            isTossMode && isTossWideMode
+              ? "fixed top-0 right-0"
+              : isTossMode
+              ? "absolute top-0 right-0"
+              : "absolute"
+          } ${leaderboardOffset || isTossMode ? "" : "top-14 right-1 sm:top-16 sm:right-2"}`}
+          style={
+            isTossMode && isTossWideMode
+              ? { transform: "translateX(100%) rotate(-90deg)", transformOrigin: "bottom left" }
+              : leaderboardOffset
+          }
         >
-          <div className="bg-slate-900/50 p-2.5 border-b border-slate-700 flex items-center justify-between">
+          <div className={`p-2.5 border-b flex items-center justify-between ${
+            isTossMode ? "bg-[#F4F8FF] border-[#D9E8FF]" : "bg-slate-900/50 border-slate-700"
+          }`}>
             <div className="flex items-center gap-2">
-              <Trophy size={16} className="text-amber-400" />
-              <h3 className="font-bold text-sm text-white">{isKo ? "순위표" : "Leaderboard"}</h3>
+              <Trophy size={16} className={isTossMode ? "text-[#2F6FE4]" : "text-amber-400"} />
+              <h3 className={`font-bold text-sm ${isTossMode ? "text-[#2F6FE4]" : "text-white"}`}>{isKo ? "순위표" : "Leaderboard"}</h3>
             </div>
-            <button onClick={() => setShowLeaderboard(false)} className="text-slate-400 hover:text-white transition-colors">
+            <button onClick={() => setShowLeaderboard(false)} className={`transition-colors ${isTossMode ? "text-[#2F6FE4] hover:text-[#1f5ec6]" : "text-slate-400 hover:text-white"}`}>
               <X size={16} />
             </button>
           </div>
           <div className="max-h-56 overflow-y-auto p-1.5">
             {scores.length === 0 ? (
-              <div className="text-center text-slate-400 py-4 text-xs">{isKo ? "아직 점수가 없습니다." : "No scores yet"}</div>
+              <div className={`text-center py-4 text-xs ${isTossMode ? "text-[#6B7684]" : "text-slate-400"}`}>{isKo ? "아직 점수가 없습니다." : "No scores yet"}</div>
             ) : (
               <div className="space-y-1">
                 {scores.map((score, idx) => {
                   const currentUsername = user ? user.username : localStorage.getItem('puzzle_guest_name');
                   const isMe = score.username === currentUsername;
                   return (
-                  <div key={idx} className={`flex items-center justify-between p-1.5 rounded-lg transition-colors ${isMe ? 'bg-blue-500/20 border border-blue-500/30' : 'hover:bg-slate-700/50'}`}>
+                  <div key={idx} className={`flex items-center justify-between p-1.5 rounded-lg transition-colors ${
+                    isMe
+                      ? (isTossMode ? 'bg-[#EAF2FF] border border-[#CFE2FF]' : 'bg-blue-500/20 border border-blue-500/30')
+                      : (isTossMode ? 'hover:bg-[#F4F8FF]' : 'hover:bg-slate-700/50')
+                  }`}>
                     <div className="flex items-center gap-3">
-                      <span className={`font-bold w-4 text-center ${idx === 0 ? 'text-amber-400' : idx === 1 ? 'text-slate-300' : idx === 2 ? 'text-amber-700' : 'text-slate-500'}`}>
+                      <span className={`font-bold w-4 text-center ${
+                        idx === 0
+                          ? (isTossMode ? 'text-[#2F6FE4]' : 'text-amber-400')
+                          : idx === 1
+                          ? (isTossMode ? 'text-[#4E5968]' : 'text-slate-300')
+                          : idx === 2
+                          ? (isTossMode ? 'text-[#6B7684]' : 'text-amber-700')
+                          : (isTossMode ? 'text-[#8B95A1]' : 'text-slate-500')
+                      }`}>
                         {idx + 1}
                       </span>
                       <div className="flex items-center gap-1.5">
-                        <div className={`w-2 h-2 rounded-full ${activeUsers.has(score.username) ? 'bg-emerald-500' : 'bg-slate-600'}`} title={activeUsers.has(score.username) ? 'Online' : 'Offline'} />
-                        <span className={`text-xs truncate max-w-[100px] ${isMe ? 'text-blue-300 font-bold' : activeUsers.has(score.username) ? 'text-slate-200' : 'text-slate-400'}`} title={score.username}>
+                        <div className={`w-2 h-2 rounded-full ${activeUsers.has(score.username) ? 'bg-emerald-500' : (isTossMode ? 'bg-[#B0B8C1]' : 'bg-slate-600')}`} title={activeUsers.has(score.username) ? 'Online' : 'Offline'} />
+                        <span className={`text-xs truncate max-w-[100px] ${
+                          isMe
+                            ? (isTossMode ? 'text-[#2F6FE4] font-bold' : 'text-blue-300 font-bold')
+                            : activeUsers.has(score.username)
+                            ? (isTossMode ? 'text-[#333D4B]' : 'text-slate-200')
+                            : (isTossMode ? 'text-[#8B95A1]' : 'text-slate-400')
+                        }`} title={score.username}>
                           {score.username}
                         </span>
-                        {isMe && <span className="text-[10px] font-bold text-blue-400 bg-blue-500/20 px-1.5 py-0.5 rounded-full ml-1">YOU</span>}
+                        {isMe && <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ml-1 ${
+                          isTossMode ? "text-[#2F6FE4] bg-[#EAF2FF]" : "text-blue-400 bg-blue-500/20"
+                        }`}>YOU</span>}
                       </div>
                     </div>
-                    <span className="text-xs font-bold text-blue-400">{score.score}</span>
+                    <span className={`text-xs font-bold ${isTossMode ? "text-[#2F6FE4]" : "text-blue-400"}`}>{score.score}</span>
                   </div>
                 )})}
               </div>
@@ -3970,7 +4391,20 @@ export default function PuzzleBoard({
       <div
         ref={pixiContainer}
         className="h-full overflow-hidden"
-        style={isTossMode && isTossWideMode ? { marginLeft: 44, width: "calc(100% - 44px)" } : { width: "100%" }}
+        style={
+          tossWidePuzzleInsetPx != null
+            ? {
+                marginLeft: tossWidePuzzleInsetPx,
+                width: `calc(100% - ${tossWidePuzzleInsetPx}px)`,
+                opacity: isLoading ? 0 : 1,
+                visibility: isLoading ? 'hidden' : 'visible',
+              }
+            : {
+                width: "100%",
+                opacity: isLoading ? 0 : 1,
+                visibility: isLoading ? 'hidden' : 'visible',
+              }
+        }
       />
 
       {showMosaicModal && (
@@ -4061,42 +4495,64 @@ export default function PuzzleBoard({
       )}
 
       {/* Mini Image Pad & Zoom Pad Container */}
-      <div
-        className={
-          isTossMode && isTossWideMode
-            ? "fixed bottom-8 right-5 z-40 flex flex-col gap-2"
-            : "fixed bottom-4 left-4 sm:bottom-6 sm:left-6 z-40 flex flex-col gap-2"
-        }
-        style={isTossMode && isTossWideMode ? { transform: "rotate(-90deg)", transformOrigin: "center center" } : undefined}
-      >
+      {showMiniPad && (
+        <div
+          className={
+            isTossMode && isTossWideMode
+              ? "fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-40 flex flex-col gap-2 items-end"
+              : "fixed bottom-4 left-4 sm:bottom-6 sm:left-6 z-40 flex flex-col gap-2"
+          }
+          style={
+            isTossMode && isTossWideMode
+              ? { transform: "translateX(100%) rotate(-90deg)", transformOrigin: "bottom left" }
+              : undefined
+          }
+        >
         {/* Zoom Pad */}
         <div 
-          className="w-24 sm:w-32 h-8 rounded-full border-2 border-slate-600/50 bg-slate-800/80 backdrop-blur-md flex items-center justify-center cursor-ew-resize touch-none"
+          className={`w-36 sm:w-48 h-9 rounded-full border-2 backdrop-blur-md flex items-center justify-center cursor-ew-resize touch-none ${
+            isTossMode
+              ? "border-[#D9E8FF] bg-[#F4F8FF]/95 text-[#2F6FE4] shadow-[0_8px_20px_rgba(47,111,228,0.12)]"
+              : "border-slate-600/50 bg-slate-800/80"
+          }`}
           onPointerDown={handleZoomPadPointerDown}
           onPointerMove={handleZoomPadPointerMove}
           onPointerUp={handleZoomPadPointerUp}
           onPointerCancel={handleZoomPadPointerUp}
           title="Drag left/right to zoom"
         >
-          <div className="flex items-center justify-between w-full px-3 text-slate-400 pointer-events-none">
+          <div className={`flex items-center justify-between w-full px-3 pointer-events-none ${isTossMode ? "text-[#2F6FE4]" : "text-slate-400"}`}>
             <Plus size={16} />
-            <div className="w-6 sm:w-10 h-1 bg-slate-600 rounded-full"></div>
+            <div className={`w-6 sm:w-10 h-1 rounded-full ${isTossMode ? "bg-[#B7CDF9]" : "bg-slate-600"}`}></div>
             <Minus size={16} />
           </div>
         </div>
 
-        {/* Mini Image Pad */}
+        {/* Mini Image Pad: 퍼즐 비율과 무관하게 1:1 정사각형으로 통일 */}
         <div
-          className="rounded-xl border-2 border-slate-600/50 overflow-hidden cursor-pointer touch-none bg-slate-800/80 backdrop-blur-md p-1.5 transition-transform hover:scale-105"
+          className={`w-36 sm:w-48 aspect-square rounded-xl border-2 overflow-hidden cursor-pointer touch-none backdrop-blur-md p-1.5 flex items-center justify-center ${
+            isTossMode
+              ? "border-[#D9E8FF] bg-[#F4F8FF]/95 shadow-[0_8px_20px_rgba(47,111,228,0.12)]"
+              : "border-slate-600/50 bg-slate-800/80"
+          }`}
           onPointerDown={handleMiniPadPointerDown}
           onPointerMove={handleMiniPadPointerMove}
           onPointerUp={handleMiniPadPointerUp}
           onPointerCancel={handleMiniPadPointerUp}
-          title="Drag to pan, Click to view full image"
+          title={isKo ? "드래그하여 화면 이동" : "Drag to pan"}
         >
-          <img src={objectUrlRef.current || imageUrl} alt="Puzzle Thumbnail" className="w-24 sm:w-32 h-auto rounded-lg opacity-90 hover:opacity-100 transition-opacity pointer-events-none object-cover" />
+          <div className="w-full h-full flex items-center justify-center overflow-hidden rounded-lg">
+            <img
+              src={objectUrlRef.current || imageUrl}
+              alt="Puzzle Thumbnail"
+              draggable={false}
+              className="block max-w-full max-h-full opacity-90 hover:opacity-100 transition-opacity pointer-events-none object-contain object-center select-none"
+              style={{ WebkitUserDrag: "none", userSelect: "none" }}
+            />
+          </div>
         </div>
-      </div>
+        </div>
+      )}
 
       {/* Full Image Modal */}
       {showFullImage && (
@@ -4104,9 +4560,33 @@ export default function PuzzleBoard({
           className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 backdrop-blur-sm p-4 animate-in fade-in duration-200" 
           onClick={() => setShowFullImage(false)}
         >
-          <div className="relative max-w-[95vw] max-h-[95vh] flex items-center justify-center">
+          {isTossMode && isTossWideMode && (
+            <button
+              className="fixed top-4 right-4 bg-slate-800 text-white rounded-full p-2 hover:bg-slate-700 border border-slate-600 transition-colors z-[110]"
+              onClick={(e) => { e.stopPropagation(); setShowFullImage(false); }}
+            >
+              <X size={20} className="sm:w-6 sm:h-6" />
+            </button>
+          )}
+          <div
+            className="relative flex items-center justify-center"
+            style={
+              isTossMode && isTossWideMode
+                ? {
+                    width: "100vh",
+                    height: "100vw",
+                    transform: "rotate(-90deg)",
+                    transformOrigin: "center center",
+                  }
+                : {
+                    maxWidth: "95vw",
+                    maxHeight: "95vh",
+                  }
+            }
+          >
             <button
               className="absolute -top-4 -right-4 sm:-top-6 sm:-right-6 bg-slate-800 text-white rounded-full p-2 hover:bg-slate-700 border border-slate-600 transition-colors z-10"
+              style={isTossMode && isTossWideMode ? { display: "none" } : undefined}
               onClick={(e) => { e.stopPropagation(); setShowFullImage(false); }}
             >
               <X size={20} className="sm:w-6 sm:h-6" />
@@ -4114,9 +4594,61 @@ export default function PuzzleBoard({
             <img 
               src={objectUrlRef.current || imageUrl} 
               alt="Full Puzzle" 
-              className="max-w-full max-h-[90vh] object-contain rounded-lg" 
+              className={`object-contain rounded-lg ${
+                isTossMode && isTossWideMode ? "max-w-[92%] max-h-[88%]" : "max-w-full max-h-[90vh]"
+              }`}
               onClick={(e) => e.stopPropagation()}
             />
+          </div>
+        </div>
+      )}
+
+      {showRotateConfirm && (
+        <div
+          className="fixed inset-0 z-[120] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
+          onClick={() => setShowRotateConfirm(false)}
+        >
+          <div
+            className={`w-full max-w-[340px] rounded-[20px] p-0 shadow-[0_12px_40px_rgba(0,0,0,0.16)] ${
+              isTossMode ? "bg-white text-slate-900" : "bg-slate-900 border border-slate-700 text-white"
+            }`}
+            style={
+              isTossMode && isTossWideMode
+                ? { width: "min(82vh, 340px)", transform: "rotate(-90deg)" }
+                : undefined
+            }
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-5 pt-[22px]">
+            <p className={`text-[18px] font-bold leading-[1.35] tracking-[-0.02em] ${isTossMode ? "text-[#191f28]" : "text-white"}`}>
+              {isKo ? "화면 회전을 위해 다시 로딩할게요." : "We'll reload to rotate the screen."}
+            </p>
+            <div className="mt-5 mb-[18px] flex gap-2">
+              <button
+                onClick={() => setShowRotateConfirm(false)}
+                className={`flex-1 min-h-12 px-3 py-[14px] rounded-[14px] text-[15px] font-semibold ${
+                  isTossMode
+                    ? "bg-[#f2f4f6] text-[#333d4b] hover:bg-[#e9ecef]"
+                    : "bg-slate-800 text-slate-200 border border-slate-700 hover:bg-slate-700"
+                }`}
+              >
+                {isKo ? "아니요" : "No"}
+              </button>
+              <button
+                onClick={() => {
+                  setShowRotateConfirm(false);
+                  setIsTossWideMode((prev) => !prev);
+                }}
+                className={`flex-1 min-h-12 px-3 py-[14px] rounded-[14px] text-[15px] font-semibold ${
+                  isTossMode
+                    ? "bg-[#3182F6] text-white hover:bg-[#2b73dc]"
+                    : "bg-blue-600 text-white hover:bg-blue-500"
+                }`}
+              >
+                {isKo ? "네" : "Yes"}
+              </button>
+            </div>
+            </div>
           </div>
         </div>
       )}

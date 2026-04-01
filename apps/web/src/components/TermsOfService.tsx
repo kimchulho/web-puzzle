@@ -9,7 +9,7 @@ const EFFECTIVE_DATE = '2026년 3월 31일';
 
 export default function TermsOfService({
   onBack,
-  /** 앱인토스: 상태바 높이만큼 sticky 기준선을 내림 */
+  /** WebView 등: 상태바 높이만큼 sticky 기준선을 내림 */
   safeAreaTop = 0,
 }: {
   onBack: () => void;
@@ -46,7 +46,7 @@ export default function TermsOfService({
         <section>
           <h2 className="text-lg font-bold text-white mb-3">제2조 (정의)</h2>
           <ol className="list-decimal list-inside space-y-2 text-slate-300">
-            <li>&quot;서비스&quot;란 운영자가 제공하는 웹·앱인토스 등 각 채널을 통한 직소 퍼즐 및 부가 기능 일체를 말합니다.</li>
+            <li>&quot;서비스&quot;란 운영자가 제공하는 인터넷 웹사이트·모바일 애플리케이션 등 각 접속 경로를 통한 직소 퍼즐 및 부가 기능 일체를 말합니다.</li>
             <li>&quot;이용자&quot;란 본 약관에 동의하고 서비스를 이용하는 자를 말합니다.</li>
             <li>&quot;계정&quot;이란 서비스 이용을 위해 운영자가 부여한 이용 자격 및 이에 수반된 식별 수단을 말합니다.</li>
             <li>&quot;콘텐츠&quot;란 서비스 내 제공되는 이미지, 텍스트, 프로그램, UI 등 일체를 말합니다.</li>
@@ -68,7 +68,7 @@ export default function TermsOfService({
           <ol className="list-decimal list-inside space-y-2 text-slate-300">
             <li>서비스는 연중무휴 1일 24시간 제공함을 원칙으로 하나, 시스템 점검·장애·기술적 필요 등으로 일시 중단될 수 있습니다.</li>
             <li>운영자는 서비스의 내용·구성·기능을 변경할 수 있으며, 중요한 변경 시 사전 또는 사후에 공지할 수 있습니다.</li>
-            <li>서비스는 <strong>웹 브라우저</strong> 및 <strong>앱인토스(토스 앱)</strong> 등 채널별로 제공될 수 있으며, 채널별 이용조건·제한은 해당 스토어 정책 및 본 약관을 따릅니다.</li>
+            <li>서비스는 <strong>웹 브라우저</strong>, <strong>모바일 애플리케이션</strong> 등 이용 환경별로 제공될 수 있으며, 환경별 이용조건·제한은 해당 앱 마켓·플랫폼 정책 및 본 약관을 따릅니다.</li>
           </ol>
         </section>
 
@@ -76,12 +76,12 @@ export default function TermsOfService({
           <h2 className="text-lg font-bold text-white mb-3">제5조 (이용자격 및 연령)</h2>
           <ol className="list-decimal list-inside space-y-2 text-slate-300">
             <li>
-              <strong className="text-white">앱인토스(토스 앱)를 통한 서비스 이용</strong>은 만 19세 이상만 가능합니다.
-              이용자는 본 조항에 해당하는 연령 요건을 충족함을 보증합니다. 운영자는 토스·앱인토스 정책 변경에 따라
-              이용 제한 조건을 조정할 수 있습니다.
+              일부 이용 경로(모바일 앱 등)에는 <strong className="text-white">해당 플랫폼 정책 또는 운영자의 별도 고지</strong>에 따라
+              연령·자격 제한이 적용될 수 있습니다. 이용자는 적용되는 요건을 충족함을 보증합니다. 운영자는 관련 법령 또는
+              제휴·배포 플랫폼 정책 변경에 따라 이용 제한 조건을 조정할 수 있습니다.
             </li>
             <li>
-              웹 등 기타 채널에 대한 연령 및 법정대리인 동의 요건은 관련 법령(「개인정보 보호법」, 「전자상거래법」 등)에 따르며,
+              그 밖의 채널에 대한 연령 및 법정대리인 동의 요건은 관련 법령(「개인정보 보호법」, 「전자상거래법」 등)에 따르며,
               필요 시 운영자는 추가 확인을 요청할 수 있습니다.
             </li>
           </ol>
@@ -117,7 +117,7 @@ export default function TermsOfService({
               가격·과금 방식·환불 조건 등은 서비스 내 고지 또는 결제 화면에 명시합니다.
             </li>
             <li>
-              결제는 이동통신·앱 마켓·토스·카드 등 <strong className="text-white">제3자 결제대행사</strong>를 통해 이루어질 수 있으며,
+              결제는 이동통신사·앱 마켓·전자결제(간편결제)·신용·체크카드 등 <strong className="text-white">제3자 결제대행사</strong>를 통해 이루어질 수 있으며,
               결제 관련 기술적 오류·승인 거절 등에 대해 운영자는 통상적으로 책임지지 않습니다(고의 또는 중과실이 있는 경우 등 법령상 달리 정함이 있는 경우 제외).
             </li>
             <li>

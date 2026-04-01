@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @source "../../web/src/**/*.{tsx,ts,jsx,js}";
+@source "./**/*.{tsx,ts,jsx,js}";
 
 @layer utilities {
   .custom-scrollbar::-webkit-scrollbar {
