@@ -410,6 +410,8 @@ export default function PuzzleBoard({
   useEffect(() => {
     let isMounted = true;
     let appInstance: PIXI.Application | null = null;
+    let deviceMotionHandler: ((event: DeviceMotionEvent) => void) | null = null;
+    let easterTicker: (() => void) | null = null;
 
     // 1. Pixi Application 초기화
     const initPixi = async () => {
@@ -532,6 +534,27 @@ export default function PuzzleBoard({
         
         const targetPositions = new Map<number, {x: number, y: number}>();
         const fallingPieces: { id: number, container: PIXI.Container, targetX: number, targetY: number, progress: number, delay: number }[] = [];
+        type PieceEasterAnim = {
+          id: number;
+          fromX: number;
+          fromY: number;
+          toX: number;
+          toY: number;
+          fromScale: number;
+          toScale: number;
+          fromAlpha: number;
+          toAlpha: number;
+          progress: number;
+          speed: number;
+          hideOnFinish?: boolean;
+        };
+        const pieceEasterAnims = new Map<number, PieceEasterAnim>();
+        const easterState = {
+          spilled: false,
+          animating: false,
+          smoothedZ: null as number | null,
+          lastSwitchAt: 0,
+        };
 
         const updateTouches = (e: TouchEvent) => {
           activeTouches = e.touches.length;
@@ -3464,6 +3487,125 @@ export default function PuzzleBoard({
           }, fallFallbackMs);
         }
 
+        const runEasterAnimation = () => {
+          if (pieceEasterAnims.size === 0) {
+            easterState.animating = false;
+            if (easterTicker) app.ticker.remove(easterTicker);
+            easterTicker = null;
+            return;
+          }
+
+          pieceEasterAnims.forEach((anim, id) => {
+            const p = pieces.current.get(id);
+            if (!p) {
+              pieceEasterAnims.delete(id);
+              return;
+            }
+            anim.progress = Math.min(1, anim.progress + anim.speed);
+            const t = 1 - Math.pow(1 - anim.progress, 3); // easeOutCubic
+            const scale = anim.fromScale + (anim.toScale - anim.fromScale) * t;
+            p.x = anim.fromX + (anim.toX - anim.fromX) * t;
+            p.y = anim.fromY + (anim.toY - anim.fromY) * t;
+            p.scale.set(scale);
+            p.alpha = anim.fromAlpha + (anim.toAlpha - anim.fromAlpha) * t;
+            if (anim.progress >= 1) {
+              if (anim.hideOnFinish) p.visible = false;
+              p.scale.set(1);
+              pieceEasterAnims.delete(id);
+            }
+          });
+        };
+
+        const startSpillEffect = () => {
+          if (!isCompletedRef.current || easterState.animating || easterState.spilled) return;
+          easterState.animating = true;
+          easterState.spilled = true;
+          pieceEasterAnims.clear();
+          const centerX = boardStartX + boardWidth / 2;
+          const centerY = boardStartY + boardHeight / 2;
+          for (let i = 0; i < PIECE_COUNT; i++) {
+            const p = pieces.current.get(i);
+            if (!p) continue;
+            p.visible = true;
+            p.eventMode = 'none';
+            p.zIndex = 0;
+            pieceEasterAnims.set(i, {
+              id: i,
+              fromX: p.x,
+              fromY: p.y,
+              toX: centerX + (Math.random() - 0.5) * boardWidth * 0.9,
+              toY: centerY + (Math.random() - 0.5) * boardHeight * 0.9,
+              fromScale: 1,
+              toScale: 0.18,
+              fromAlpha: p.alpha,
+              toAlpha: 0,
+              progress: 0,
+              speed: 0.045 + Math.random() * 0.03,
+              hideOnFinish: true,
+            });
+          }
+          if (!easterTicker) {
+            easterTicker = runEasterAnimation;
+            app.ticker.add(easterTicker);
+          }
+        };
+
+        const startRestoreEffect = () => {
+          if (!isCompletedRef.current || easterState.animating || !easterState.spilled) return;
+          easterState.animating = true;
+          easterState.spilled = false;
+          pieceEasterAnims.clear();
+          const spawnY = boardStartY - pieceHeight * 6;
+          const spreadX = boardWidth * 1.4;
+          for (let i = 0; i < PIECE_COUNT; i++) {
+            const p = pieces.current.get(i);
+            if (!p) continue;
+            const targetX = boardStartX - boardWidth * 0.2 + Math.random() * spreadX;
+            const targetY = boardStartY - pieceHeight * 0.5 + Math.random() * (boardHeight + pieceHeight * 1.4);
+            p.visible = true;
+            p.eventMode = 'none';
+            p.zIndex = 0;
+            pieceEasterAnims.set(i, {
+              id: i,
+              fromX: boardStartX + Math.random() * boardWidth,
+              fromY: spawnY - Math.random() * pieceHeight * 8,
+              toX: targetX,
+              toY: targetY,
+              fromScale: 1,
+              toScale: 1,
+              fromAlpha: 1,
+              toAlpha: 1,
+              progress: 0,
+              speed: 0.02 + Math.random() * 0.025,
+            });
+          }
+          if (!easterTicker) {
+            easterTicker = runEasterAnimation;
+            app.ticker.add(easterTicker);
+          }
+        };
+
+        deviceMotionHandler = (event: DeviceMotionEvent) => {
+          if (!isCompletedRef.current) return;
+          const z = event.accelerationIncludingGravity?.z;
+          if (typeof z !== 'number' || Number.isNaN(z)) return;
+
+          const prev = easterState.smoothedZ;
+          easterState.smoothedZ = prev == null ? z : prev * 0.8 + z * 0.2;
+          const filteredZ = easterState.smoothedZ;
+          const now = Date.now();
+          if (now - easterState.lastSwitchAt < 1200) return;
+
+          if (!easterState.spilled && filteredZ < -6.5) {
+            easterState.lastSwitchAt = now;
+            startSpillEffect();
+          } else if (easterState.spilled && filteredZ > 6.5) {
+            easterState.lastSwitchAt = now;
+            startRestoreEffect();
+          }
+        };
+        window.addEventListener('devicemotion', deviceMotionHandler);
+
         setPlacedPieces(initialPlacedCount);
 
         if (initialPlacedCount === PIECE_COUNT) {
@@ -3668,6 +3810,9 @@ export default function PuzzleBoard({
 
     return () => {
       isMounted = false;
+      if (deviceMotionHandler) {
+        window.removeEventListener('devicemotion', deviceMotionHandler);
+      }
       if (playTimeInterval) clearInterval(playTimeInterval);
       isBotRunningRef.current = false;
       isColorBotRunningRef.current = false;
@@ -3683,6 +3828,14 @@ export default function PuzzleBoard({
         channelRef.current.unsubscribe();
       }
       const runHeavyTeardown = () => {
+        try {
+          if (easterTicker && appInst) {
+            appInst.ticker.remove(easterTicker);
+            easterTicker = null;
+          }
+        } catch {
+          /* noop */
+        }
         try {
           tex?.destroy(true);
         } catch {

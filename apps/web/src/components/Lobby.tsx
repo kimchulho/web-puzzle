@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Trophy, Grid3X3, RefreshCw, Users, Lock, Image as ImageIcon, Play, Plus, Grid, Clock, RotateCcw, Maximize, Minimize, LogOut, ShieldAlert, LogIn, ChevronDown, Languages } from 'lucide-react';
+import { Trophy, RefreshCw, Users, Lock, Image as ImageIcon, Play, Plus, Grid, Clock, RotateCcw, Maximize, Minimize, LogOut, ShieldAlert, LogIn, ChevronDown, Languages } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
 import { motion } from 'motion/react';
 import { encodeRoomId } from '../lib/roomCode';
@@ -18,6 +18,7 @@ const isBotLikeUser = (name: unknown) =>
 const WEB_REWARDED_AD_UNIT_PATH = '/23346390161/web_puzzle_rewarded';
 const GPT_SCRIPT_ID = 'google-publisher-tag-script';
 const REWARDED_DEBUG_PREFIX = '[RewardedAd]';
+const ENABLE_WEB_REWARDED_GATE = false;
 
 declare global {
   interface Window {
@@ -511,6 +512,14 @@ const Lobby = ({
     await handleCreateRoom();
   };
 
+  const handleCreateRoomClick = async () => {
+    if (!tossUi && ENABLE_WEB_REWARDED_GATE) {
+      await handleCreateRoomWithReward();
+      return;
+    }
+    await handleCreateRoom();
+  };
+
   const handleJoinSpecificRoom = (room: any) => {
     const currentPlayers = room.currentPlayers ?? 0;
     const maxPlayers = room.max_players ?? 0;
@@ -759,7 +768,19 @@ const Lobby = ({
         <div className="fixed top-0 left-0 w-full z-50 bg-slate-900/80 backdrop-blur-sm border-b border-slate-700/50 p-2 sm:p-3 flex items-center justify-between text-white">
           <div className="flex items-center gap-2">
             <div className="flex items-center justify-center bg-indigo-500/10 w-8 h-8 sm:w-9 sm:h-9 rounded-lg border border-indigo-500/20 shrink-0">
-              <Grid3X3 size={18} className="text-indigo-400" />
+              <svg
+                width="24"
+                height="24"
+                viewBox="-20 -30 200 200"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="10"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="text-indigo-400"
+              >
+                <path d="M25.18,11.87c0,20.95,13.8,42.39,4.85,42.68-8.95.29-11.99-6.96-17.69-6.96s-8.34,4.77-8.34,18.59,2.64,18.59,8.34,18.59,8.74-7.24,17.69-6.96c8.95.29-4.85,21.73-4.85,42.68,20.95,0,42.39,13.8,42.68,4.85.29-8.95-6.96-11.99-6.96-17.69s4.77-8.34,18.59-8.34,18.59,2.64,18.59,8.34-7.24,8.74-6.96,17.69c.29,8.95,21.73-4.85,42.68-4.85,0-20.95-13.8-42.39-4.85-42.68s11.99,6.96,17.69,6.96,8.34-4.77,8.34-18.59-2.64-18.59-8.34-18.59-8.74,7.24-17.69,6.96c-8.95-.29,4.85-21.73,4.85-42.68-20.95,0-42.39-13.8-42.68-4.85s6.96,11.99,6.96,17.69-4.77,8.34-18.59,8.34-18.59-2.64-18.59-8.34,7.24-8.74,6.96-17.69c-.29-8.95-21.73,4.85-42.68,4.85Z"/>
+              </svg>
             </div>
             <span className="font-bold text-sm sm:text-base">{isKo ? "웹퍼즐" : "Web Puzzle"}</span>
           </div>
@@ -785,26 +806,6 @@ const Lobby = ({
         >
           {!tossUi && (
             <>
-              <div
-                className={`w-24 h-24 rounded-2xl flex items-center justify-center mx-auto mb-4 ${
-                  tossSkin ? tossSkin.iconBox : "bg-indigo-500/10"
-                }`}
-              >
-                <svg
-                  width="60"
-                  height="60"
-                  viewBox="-20 -30 200 200"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="10"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  className={tossSkin ? tossSkin.subtleIcon : "text-indigo-400"}
-                >
-                  <path d="M25.18,11.87c0,20.95,13.8,42.39,4.85,42.68-8.95.29-11.99-6.96-17.69-6.96s-8.34,4.77-8.34,18.59,2.64,18.59,8.34,18.59,8.74-7.24,17.69-6.96c8.95.29-4.85,21.73-4.85,42.68,20.95,0,42.39,13.8,42.68,4.85.29-8.95-6.96-11.99-6.96-17.69s4.77-8.34,18.59-8.34,18.59,2.64,18.59,8.34-7.24,8.74-6.96,17.69c.29,8.95,21.73-4.85,42.68-4.85,0-20.95-13.8-42.39-4.85-42.68s11.99,6.96,17.69,6.96,8.34-4.77,8.34-18.59-2.64-18.59-8.34-18.59-8.74,7.24-17.69,6.96c-8.95-.29,4.85-21.73,4.85-42.68-20.95,0-42.39-13.8-42.68-4.85s6.96,11.99,6.96,17.69-4.77,8.34-18.59,8.34-18.59-2.64-18.59-8.34,7.24-8.74,6.96-17.69c-.29-8.95-21.73,4.85-42.68,4.85Z"/>
-                </svg>
-              </div>
-              
               <h1 className={`text-3xl font-bold mb-2 ${tossSkin ? tossSkin.heading : "text-white"}`}>
                 {isKo ? "웹퍼즐" : "Web Puzzle"}
               </h1>
@@ -1007,8 +1008,8 @@ const Lobby = ({
           </div>
 
           <button
-            onClick={handleCreateRoomWithReward}
-            disabled={isCreating || isRewardAdLoading || (!user && !guestName.trim())}
+            onClick={handleCreateRoomClick}
+            disabled={isCreating || (ENABLE_WEB_REWARDED_GATE && isRewardAdLoading) || (!user && !guestName.trim())}
             className={`w-full font-medium py-4 px-6 rounded-xl flex items-center justify-center gap-2 transition-colors ${
               tossSkin
                 ? `${tossSkin.primaryBtn} disabled:bg-slate-200 disabled:text-slate-400`
@@ -1016,11 +1017,11 @@ const Lobby = ({
             }`}
           >
             <Plus className="w-5 h-5" />
-            {isCreating || isRewardAdLoading
+            {isCreating || (ENABLE_WEB_REWARDED_GATE && isRewardAdLoading)
               ? (isKo ? '생성 중...' : 'Creating...')
               : (isKo
-                ? (tossUi ? '방 만들기' : '광고 한 편 보고 방 만들기')
-                : (tossUi ? 'Create room' : 'Watch an ad and create room'))}
+                ? '방 만들기'
+                : 'Create room')}
           </button>
         </div>
 
