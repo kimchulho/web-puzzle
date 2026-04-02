@@ -410,11 +410,15 @@ export default function PuzzleBoard({
 
   useEffect(() => {
     let isMounted = true;
+    let deferredBevelRafId: number | null = null;
     let appInstance: PIXI.Application | null = null;
     let deviceMotionHandler: ((event: DeviceMotionEvent) => void) | null = null;
     let easterTicker: (() => void) | null = null;
     /** true: 조각은 벡터+베벨(조각당 generateTexture 생략)·자물쇠 텍스처 1회 공유. false: 기존 래스터 조각+자물쇠. */
     const FAST_PIECE_INIT = true;
+    /** FAST로 벡터만 올린 뒤, 로딩 이후 rAF로 조각마다 베벨 래스터를 점진 적용 */
+    const DEFER_PIECE_BEVEL_UPGRADE = true;
+    const BEVEL_UPGRADE_PIECES_PER_FRAME = 2;
     let sharedLockTexture: PIXI.Texture | null = null;
 
     // 1. Pixi Application 초기화
@@ -3811,6 +3815,133 @@ export default function PuzzleBoard({
         };
         window.addEventListener('devicemotion', deviceMotionHandler);
 
+        const upgradeOnePieceDeferredBevel = (pieceId: number) => {
+          if (!isMounted) return;
+          const pieceContainer = pieces.current.get(pieceId);
+          if (!pieceContainer || pieceContainer.destroyed) return;
+          const oldNode = pieceContainer.getChildByLabel('pieceSprite');
+          if (!oldNode || !(oldNode instanceof PIXI.Graphics)) return;
+
+          const col = pieceId % GRID_COLS;
+          const row = Math.floor(pieceId / GRID_COLS);
+          const topTab = row === 0 ? 0 : -horizontalTabs[row - 1][col];
+          const rightTab = col === GRID_COLS - 1 ? 0 : verticalTabs[row][col];
+          const bottomTab = row === GRID_ROWS - 1 ? 0 : horizontalTabs[row][col];
+          const leftTab = col === 0 ? 0 : -verticalTabs[row][col - 1];
+
+          const applyPieceShapeLocal = (g: PIXI.Graphics) => {
+            g.moveTo(0, 0);
+            drawEdge(g, 0, 0, pieceWidth, 0, topTab, tabDepth);
+            drawEdge(g, pieceWidth, 0, pieceWidth, pieceHeight, rightTab, tabDepth);
+            drawEdge(g, pieceWidth, pieceHeight, 0, pieceHeight, bottomTab, tabDepth);
+            drawEdge(g, 0, pieceHeight, 0, 0, leftTab, tabDepth);
+            g.closePath();
+          };
+
+          const pieceGraphics = new PIXI.Graphics();
+          applyPieceShapeLocal(pieceGraphics);
+          const matrix = new PIXI.Matrix();
+          matrix.scale(boardWidth / texture.width, boardHeight / texture.height);
+          matrix.translate(-col * pieceWidth, -row * pieceHeight);
+          pieceGraphics.fill({ texture: texture, matrix: matrix, textureSpace: 'global' });
+          pieceGraphics.stroke({ color: 0x000000, alpha: 0.2, width: 1 });
+
+          const bevelContainer = new PIXI.Container();
+          bevelContainer.addChild(pieceGraphics);
+
+          const whiteLine = new PIXI.Graphics();
+          applyPieceShapeLocal(whiteLine);
+          whiteLine.stroke({ width: 1, color: 0xffffff, alpha: 0.6 });
+          whiteLine.x = 1;
+          whiteLine.y = 1;
+          const blurWhite = new PIXI.BlurFilter();
+          blurWhite.strength = 1;
+          whiteLine.filters = [blurWhite];
+
+          const blackLine = new PIXI.Graphics();
+          applyPieceShapeLocal(blackLine);
+          blackLine.stroke({ width: 1, color: 0x000000, alpha: 0.6 });
+          blackLine.x = -1;
+          blackLine.y = -1;
+          const blurBlack = new PIXI.BlurFilter();
+          blurBlack.strength = 1;
+          blackLine.filters = [blurBlack];
+
+          const maskGraphics = new PIXI.Graphics();
+          applyPieceShapeLocal(maskGraphics);
+          maskGraphics.fill({ color: 0xffffff });
+
+          bevelContainer.addChild(whiteLine);
+          bevelContainer.addChild(blackLine);
+          bevelContainer.addChild(maskGraphics);
+          whiteLine.mask = maskGraphics;
+          blackLine.mask = maskGraphics;
+
+          const bounds = pieceGraphics.getLocalBounds();
+          const minX = bounds.minX !== undefined ? bounds.minX : bounds.x;
+          const minY = bounds.minY !== undefined ? bounds.minY : bounds.y;
+          const maxX = bounds.maxX !== undefined ? bounds.maxX : bounds.x + bounds.width;
+          const maxY = bounds.maxY !== undefined ? bounds.maxY : bounds.y + bounds.height;
+
+          let maxRes = 2;
+          if (PIECE_COUNT > 500) maxRes = 1;
+          else if (PIECE_COUNT > 200) maxRes = 1.5;
+          let targetResolution = Math.min(window.devicePixelRatio || 1, maxRes);
+          if (isCanvasRenderer) targetResolution *= 0.5;
+
+          const padding = 40;
+          const frame = new PIXI.Rectangle(
+            minX - padding,
+            minY - padding,
+            maxX - minX + padding * 2,
+            maxY - minY + padding * 2,
+          );
+
+          let pieceTex: PIXI.Texture;
+          try {
+            pieceTex = app.renderer.generateTexture({
+              target: bevelContainer,
+              resolution: targetResolution,
+              frame: frame,
+            });
+          } catch (e) {
+            console.warn('[PuzzleBoard] deferred bevel failed', pieceId, e);
+            bevelContainer.destroy({ children: true });
+            return;
+          }
+
+          const pieceSprite = new PIXI.Sprite(pieceTex);
+          pieceSprite.label = 'pieceSprite';
+          pieceSprite.eventMode = 'none';
+          pieceSprite.x = frame.x;
+          pieceSprite.y = frame.y;
+
+          pieceContainer.removeChild(oldNode);
+          oldNode.destroy();
+          bevelContainer.destroy({ children: true });
+
+          pieceContainer.addChildAt(pieceSprite, 0);
+        };
+
+        const scheduleDeferredBevelUpgrades = () => {
+          if (!DEFER_PIECE_BEVEL_UPGRADE || !FAST_PIECE_INIT) return;
+          let nextId = 0;
+          const step = () => {
+            deferredBevelRafId = null;
+            if (!isMounted) return;
+            let budget = BEVEL_UPGRADE_PIECES_PER_FRAME;
+            while (budget > 0 && nextId < PIECE_COUNT) {
+              upgradeOnePieceDeferredBevel(nextId);
+              nextId++;
+              budget--;
+            }
+            if (nextId < PIECE_COUNT && isMounted) {
+              deferredBevelRafId = requestAnimationFrame(step);
+            }
+          };
+          deferredBevelRafId = requestAnimationFrame(step);
+        };
+
         setPlacedPieces(initialPlacedCount);
 
         if (initialPlacedCount === PIECE_COUNT) {
@@ -3831,6 +3962,12 @@ export default function PuzzleBoard({
 
         bumpProgress(100);
         setIsLoading(false);
+
+        if (DEFER_PIECE_BEVEL_UPGRADE && FAST_PIECE_INIT) {
+          requestAnimationFrame(() => {
+            if (isMounted) scheduleDeferredBevelUpgrades();
+          });
+        }
 
         // 3. Supabase Realtime 수신
         const channel = supabase.channel(`room_${roomId}`);
@@ -4015,6 +4152,10 @@ export default function PuzzleBoard({
 
     return () => {
       isMounted = false;
+      if (deferredBevelRafId != null) {
+        cancelAnimationFrame(deferredBevelRafId);
+        deferredBevelRafId = null;
+      }
       if (deviceMotionHandler) {
         window.removeEventListener('devicemotion', deviceMotionHandler);
       }
