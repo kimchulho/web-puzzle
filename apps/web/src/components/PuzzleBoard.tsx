@@ -419,6 +419,7 @@ export default function PuzzleBoard({
     /** FAST로 벡터만 올린 뒤, 로딩 이후 rAF로 조각마다 베벨 래스터를 점진 적용 */
     const DEFER_PIECE_BEVEL_UPGRADE = true;
     const BEVEL_UPGRADE_PIECES_PER_FRAME = 2;
+    const BEVEL_UPGRADE_CROSSFADE_MS = 260;
     let sharedLockTexture: PIXI.Texture | null = null;
 
     // 1. Pixi Application 초기화
@@ -3915,12 +3916,34 @@ export default function PuzzleBoard({
           pieceSprite.eventMode = 'none';
           pieceSprite.x = frame.x;
           pieceSprite.y = frame.y;
+          pieceSprite.alpha = 0;
 
-          pieceContainer.removeChild(oldNode);
-          oldNode.destroy();
           bevelContainer.destroy({ children: true });
 
+          oldNode.label = 'deferredBevelFadeOut';
           pieceContainer.addChildAt(pieceSprite, 0);
+
+          let fadeElapsed = 0;
+          const fadeTicker = (ticker: PIXI.Ticker) => {
+            if (!isMounted || pieceContainer.destroyed) {
+              app.ticker.remove(fadeTicker);
+              return;
+            }
+            fadeElapsed += ticker.deltaMS;
+            const u = Math.min(1, fadeElapsed / BEVEL_UPGRADE_CROSSFADE_MS);
+            const eased = u * u * (3 - 2 * u);
+            oldNode.alpha = 1 - eased;
+            pieceSprite.alpha = eased;
+            if (u < 1) return;
+            app.ticker.remove(fadeTicker);
+            pieceSprite.alpha = 1;
+            oldNode.alpha = 1;
+            if (oldNode.parent === pieceContainer) {
+              pieceContainer.removeChild(oldNode);
+            }
+            oldNode.destroy();
+          };
+          app.ticker.add(fadeTicker);
         };
 
         const scheduleDeferredBevelUpgrades = () => {
