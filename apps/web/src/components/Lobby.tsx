@@ -5,7 +5,11 @@ import { motion } from 'motion/react';
 import { encodeRoomId, parseRoomNumberOrCode } from '../lib/roomCode';
 import { recordUserRoomVisit } from '../lib/recordUserRoomVisit';
 import { ImageSelectorModal } from './ImageSelectorModal';
-import { TossLobbyBottomBanner } from './TossLobbyBottomBanner';
+import {
+  TossLobbyBottomBanner,
+  TOSS_LOBBY_BANNER_SLOT_H,
+  TOSS_LOBBY_BANNER_VERTICAL_PAD,
+} from './TossLobbyBottomBanner';
 import { hasTossRewardAdBeenSeenForRoom, runTossRewardedRoomEntry } from '../lib/tossRewardedAdGate';
 
 const formatPlayTime = (seconds: number) => {
@@ -1035,15 +1039,27 @@ const Lobby = ({
 
   return (
     <div
-      className={`relative box-border flex min-h-[100dvh] min-h-screen flex-col ${
-        tossUi ? "bg-[#F4F8FF]" : "bg-slate-950"
+      className={`relative box-border flex flex-col ${
+        tossUi
+          ? "h-[100dvh] max-h-[100dvh] min-h-0 overflow-hidden bg-[#F4F8FF]"
+          : "min-h-[100dvh] min-h-screen bg-slate-950"
       }`}
     >
       <div
         className={`relative flex w-full flex-1 min-h-0 flex-col items-center overflow-y-auto overflow-x-hidden ${
           !tossUi ? "pt-20 pb-12 px-4" : ""
         }`}
-        style={tossUi ? { paddingTop: tossUi.safeArea.top + 12 } : undefined}
+        style={
+          tossUi
+            ? {
+                paddingTop: tossUi.safeArea.top + 12,
+                paddingBottom:
+                  tossUi.safeArea.bottom +
+                  TOSS_LOBBY_BANNER_SLOT_H +
+                  TOSS_LOBBY_BANNER_VERTICAL_PAD,
+              }
+            : undefined
+        }
       >
       {!tossUi ? (
         <div className="fixed top-0 left-0 w-full z-50 bg-slate-900/80 backdrop-blur-sm border-b border-slate-700/50 p-2 sm:p-3 flex items-center justify-between text-white">
@@ -1826,7 +1842,13 @@ const Lobby = ({
         </footer>
       )}
       </div>
-      {tossUi ? <TossLobbyBottomBanner safeAreaBottom={tossUi.safeArea.bottom} /> : null}
+      {tossUi ? (
+        <TossLobbyBottomBanner
+          safeAreaBottom={tossUi.safeArea.bottom}
+          safeAreaLeft={tossUi.safeArea.left}
+          safeAreaRight={tossUi.safeArea.right}
+        />
+      ) : null}
     </div>
   );
 };

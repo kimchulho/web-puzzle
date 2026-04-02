@@ -32,11 +32,24 @@ function ensureTossAdsInitialized(): Promise<boolean> {
   });
 }
 
+/** 배너 래퍼 paddingTop + 슬롯 height + paddingBottom(최소) — 로비 스크롤 하단 여백 계산용 */
+export const TOSS_LOBBY_BANNER_SLOT_H = 96;
+export const TOSS_LOBBY_BANNER_VERTICAL_PAD = 8; // pt 4 + pb 4 (슬롯 위아래)
+
 /**
  * 토스 로비 하단 고정형 배너(리스트형 96px 권장).
+ * 화면 하단에 항상 표시(`fixed`)되어 긴 목록을 스크롤해도 사라지지 않아요.
  * 게임형: 홈 인디케이터 위 최소 여백 4px — @see https://developers-apps-in-toss.toss.im/ads/develop.html
  */
-export function TossLobbyBottomBanner({ safeAreaBottom }: { safeAreaBottom: number }) {
+export function TossLobbyBottomBanner({
+  safeAreaBottom,
+  safeAreaLeft = 0,
+  safeAreaRight = 0,
+}: {
+  safeAreaBottom: number;
+  safeAreaLeft?: number;
+  safeAreaRight?: number;
+}) {
   const supported =
     typeof window !== "undefined" &&
     TossAds.initialize.isSupported() &&
@@ -74,13 +87,15 @@ export function TossLobbyBottomBanner({ safeAreaBottom }: { safeAreaBottom: numb
 
   return (
     <div
-      className="w-full shrink-0 bg-[#F4F8FF]"
+      className="pointer-events-auto fixed bottom-0 left-0 right-0 z-40 w-full border-t border-[#D9E8FF] bg-[#F4F8FF] shadow-[0_-4px_24px_rgba(47,111,228,0.08)]"
       style={{
         paddingTop: 4,
         paddingBottom: safeAreaBottom + 4,
+        paddingLeft: safeAreaLeft,
+        paddingRight: safeAreaRight,
       }}
     >
-      <div ref={containerRef} style={{ width: "100%", height: 96 }} />
+      <div ref={containerRef} style={{ width: "100%", height: TOSS_LOBBY_BANNER_SLOT_H }} />
     </div>
   );
 }

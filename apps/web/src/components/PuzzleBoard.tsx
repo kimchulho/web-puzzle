@@ -411,6 +411,8 @@ export default function PuzzleBoard({
 
   useEffect(() => {
     let isMounted = true;
+    /** initPixi 안에서 할당: 방 나가기 시 스티키/드래그 중 lock 브로드캐스트 해제 */
+    let releaseOwnedPieceLocks: (() => void) | null = null;
     let deferredBevelRafId: number | null = null;
     let appInstance: PIXI.Application | null = null;
     let deviceMotionHandler: ((event: DeviceMotionEvent) => void) | null = null;
@@ -421,6 +423,10 @@ export default function PuzzleBoard({
     const DEFER_PIECE_BEVEL_UPGRADE = true;
     const BEVEL_UPGRADE_PIECES_PER_FRAME = 2;
     let sharedLockTexture: PIXI.Texture | null = null;
+    /** Supabase Realtime: canPush 전 send()는 REST 폴백·경고 유발 → 구독 후에만 전송, 이전은 큐 */
+    let realtimeBroadcastReady = false;
+    const realtimeBroadcastQueue: { event: string; payload: unknown }[] = [];
+    let enqueueRealtimeBroadcast: (event: string, payload: unknown) => void = () => {};
 
     // 1. Pixi Application 초기화
     const initPixi = async () => {
@@ -479,6 +485,9 @@ export default function PuzzleBoard({
         // 떨어지는 인트로는 alpha=0에서 시작하므로, Canvas일 때는 즉시 보이게 한다.
         const isCanvasRenderer = app.renderer.type === PIXI_RENDERER_TYPE_CANVAS;
         const useFallingPieceIntro = !isCanvasRenderer;
+        /** Canvas(저사양)에서는 지연 베벨(generateTexture) 경로를 쓰지 않음 */
+        const deferBevelUpgrade =
+          DEFER_PIECE_BEVEL_UPGRADE && FAST_PIECE_INIT && !isCanvasRenderer;
 
         app.stage.eventMode = 'static';
         app.stage.hitArea = new PIXI.Rectangle(-10000, -10000, 20000, 20000);
@@ -507,6 +516,8 @@ export default function PuzzleBoard({
         world.addChild(cursorsContainer);
         const cursors = new Map<string, { container: PIXI.Container, targetX: number, targetY: number }>();
         const remoteLockedPieces = new Map<string, Set<number>>();
+        /** presence에 실어 신규 입장자가 선점 상태를 동기화할 수 있게 함 */
+        const localPresenceLockIds = new Set<number>();
 
         // 배경 패닝 로직
         let isPanning = false;
@@ -648,6 +659,17 @@ export default function PuzzleBoard({
               selectedCluster = null;
               return;
             }
+
+            if (isClusterHeldRemotely(selectedCluster)) {
+              sendUnlockBatch(Array.from(selectedCluster));
+              selectedCluster.forEach((id) => {
+                const p = pieces.current.get(id)!;
+                const lockIcon = p.getChildByLabel("lockIcon");
+                if (lockIcon) lockIcon.visible = false;
+              });
+              selectedCluster = null;
+              return;
+            }
             
             isDraggingSelected = true;
             selectedMoved = false;
@@ -705,19 +727,25 @@ export default function PuzzleBoard({
                 broadcastY = localPos.y;
               }
 
-              channelRef.current?.send({
-                type: 'broadcast',
-                event: 'cursorMove',
-                payload: {
-                  username: user?.username ?? localStorage.getItem('puzzle_guest_name') ?? 'guest',
-                  x: broadcastX,
-                  y: broadcastY
-                }
+              enqueueRealtimeBroadcast('cursorMove', {
+                username: user?.username ?? localStorage.getItem('puzzle_guest_name') ?? 'guest',
+                x: broadcastX,
+                y: broadcastY,
               });
             }
           }
 
           if (selectedCluster && e.pointerType === 'mouse' && !isDraggingSelected && !isDragging) {
+            if (isClusterHeldRemotely(selectedCluster)) {
+              sendUnlockBatch(Array.from(selectedCluster));
+              selectedCluster.forEach((id) => {
+                const p = pieces.current.get(id)!;
+                const lockIcon = p.getChildByLabel("lockIcon");
+                if (lockIcon) lockIcon.visible = false;
+              });
+              selectedCluster = null;
+              return;
+            }
             const localPos = e.getLocalPosition(world);
             const updates: any[] = [];
             
@@ -734,6 +762,19 @@ export default function PuzzleBoard({
           }
 
           if (isDraggingSelected && selectedCluster) {
+            if (isClusterHeldRemotely(selectedCluster)) {
+              sendUnlockBatch(Array.from(selectedCluster));
+              selectedCluster.forEach((id) => {
+                const p = pieces.current.get(id);
+                if (!p) return;
+                const lockIcon = p.getChildByLabel("lockIcon");
+                if (lockIcon) lockIcon.visible = false;
+              });
+              selectedCluster = null;
+              isDraggingSelected = false;
+              selectedMoved = false;
+              return;
+            }
             if (activeTouches > 1) {
               isDraggingSelected = false;
               return;
@@ -772,7 +813,13 @@ export default function PuzzleBoard({
 
           if (isDragging) {
             if (activeTouches > 1) {
-              isDragging = false; // 핀치 줌이 시작되면 드래그 취소
+              if (dragCluster.size > 0) {
+                sendUnlockBatch(Array.from(dragCluster));
+                dragCluster = new Set();
+              }
+              isDragging = false;
+              isTouchDraggingPiece = false;
+              currentShiftY = 0;
               return;
             }
             
@@ -1581,44 +1628,156 @@ export default function PuzzleBoard({
         };
 
         const sendMoveBatch = throttle((updates: {pieceId: number, x: number, y: number}[]) => {
-          if (channelRef.current) {
-            channelRef.current.send({
-              type: 'broadcast',
-              event: 'moveBatch',
-              payload: { updates }
-            });
-          }
+          enqueueRealtimeBroadcast('moveBatch', { updates });
         }, 50);
 
         const sendBotCursorMove = throttle((username: string, x: number, y: number) => {
-          if (channelRef.current) {
-            channelRef.current.send({
-              type: 'broadcast',
-              event: 'cursorMove',
-              payload: { username, x, y }
-            });
-          }
+          enqueueRealtimeBroadcast('cursorMove', { username, x, y });
         }, 100);
 
         const sendLockBatch = (pieceIds: number[], userId?: string) => {
-          if (channelRef.current) {
-            const currentUsername = user ? user.username : localStorage.getItem('puzzle_guest_name');
-            channelRef.current.send({
-              type: 'broadcast',
-              event: 'lock',
-              payload: { pieceIds, userId: userId || currentUsername }
-            });
+          const ch = channelRef.current;
+          if (!ch) return;
+          const currentUsername = user ? user.username : localStorage.getItem('puzzle_guest_name');
+          const me = currentUsername != null && currentUsername !== '' ? String(currentUsername) : 'guest';
+          const uid = userId != null ? String(userId) : me;
+          enqueueRealtimeBroadcast('lock', { pieceIds, userId: uid });
+          if (uid === me) {
+            pieceIds.forEach((id) => localPresenceLockIds.add(id));
+            if (realtimeBroadcastReady) {
+              void ch.track({
+                user: me,
+                lockedPieceIds: Array.from(localPresenceLockIds),
+              });
+            }
           }
         };
 
         const sendUnlockBatch = (pieceIds: number[], userId?: string) => {
-          if (channelRef.current) {
-            const currentUsername = user ? user.username : localStorage.getItem('puzzle_guest_name');
-            channelRef.current.send({
-              type: 'broadcast',
-              event: 'unlock',
-              payload: { pieceIds, userId: userId || currentUsername }
+          const ch = channelRef.current;
+          if (!ch) return;
+          const currentUsername = user ? user.username : localStorage.getItem('puzzle_guest_name');
+          const me = currentUsername != null && currentUsername !== '' ? String(currentUsername) : 'guest';
+          const uid = userId != null ? String(userId) : me;
+          enqueueRealtimeBroadcast('unlock', { pieceIds, userId: uid });
+          if (uid === me) {
+            pieceIds.forEach((id) => localPresenceLockIds.delete(id));
+            if (realtimeBroadcastReady) {
+              void ch.track({
+                user: me,
+                lockedPieceIds: Array.from(localPresenceLockIds),
+              });
+            }
+          }
+        };
+
+        releaseOwnedPieceLocks = () => {
+          try {
+            if (selectedCluster && selectedCluster.size > 0) {
+              sendUnlockBatch(Array.from(selectedCluster));
+            }
+            if (isDragging && dragCluster.size > 0) {
+              sendUnlockBatch(Array.from(dragCluster));
+            }
+          } catch {
+            /* noop */
+          }
+        };
+
+        const getLocalUsername = (): string => {
+          const u = user ? user.username : localStorage.getItem("puzzle_guest_name");
+          return u != null && u !== "" ? String(u) : "guest";
+        };
+
+        /** 다른 클라이언트가 이미 lock 브로드캐스트로 점유한 조각이 클러스터에 포함되는지 */
+        const isClusterHeldRemotely = (cluster: Set<number>): boolean => {
+          const me = getLocalUsername();
+          for (const [uid, set] of remoteLockedPieces) {
+            if (String(uid) === me) continue;
+            for (const id of cluster) {
+              if (set.has(id)) return true;
+            }
+          }
+          return false;
+        };
+
+        /** 원격 유저의 lock이 우선 — 겹치면 로컬 스티키/드래그를 즉시 해제하고 unlock 브로드캐스트 */
+        const abortLocalInteractionForRemoteClaim = (remoteUserId: string, incomingPieceIds: number[]) => {
+          if (String(remoteUserId) === getLocalUsername()) return;
+          const incoming = new Set(incomingPieceIds);
+          const hitsSelected = Boolean(selectedCluster && [...selectedCluster].some((id) => incoming.has(id)));
+          const hitsDrag = Boolean(isDragging && [...dragCluster].some((id) => incoming.has(id)));
+          if (!hitsSelected && !hitsDrag) return;
+
+          if (selectedCluster && selectedCluster.size > 0) {
+            sendUnlockBatch(Array.from(selectedCluster));
+            selectedCluster.forEach((id) => {
+              const p = pieces.current.get(id);
+              if (!p) return;
+              const lockIcon = p.getChildByLabel("lockIcon");
+              if (lockIcon) lockIcon.visible = false;
             });
+            selectedCluster = null;
+          }
+          if (isDragging && dragCluster.size > 0) {
+            sendUnlockBatch(Array.from(dragCluster));
+            dragCluster.forEach((id) => {
+              const p = pieces.current.get(id);
+              if (!p) return;
+              const lockIcon = p.getChildByLabel("lockIcon");
+              if (lockIcon) lockIcon.visible = false;
+            });
+            dragCluster = new Set();
+          }
+          isDragging = false;
+          isTouchDraggingPiece = false;
+          isDraggingSelected = false;
+          selectedMoved = false;
+          currentShiftY = 0;
+        };
+
+        /** remoteLockedPieces 기준으로 조각 흐림·입력 가능 여부 일괄 반영 (로컬 드래그/선택은 유지) */
+        const refreshRemoteLockVisuals = () => {
+          const me = getLocalUsername();
+          for (let id = 0; id < PIECE_COUNT; id++) {
+            const pieceContainer = pieces.current.get(id);
+            if (!pieceContainer) continue;
+            const col = id % GRID_COLS;
+            const row = Math.floor(id / GRID_COLS);
+            const targetX = boardStartX + col * pieceWidth;
+            const targetY = boardStartY + row * pieceHeight;
+            const snapped =
+              Math.abs(pieceContainer.x - targetX) < 1 && Math.abs(pieceContainer.y - targetY) < 1;
+
+            if (snapped) {
+              pieceContainer.alpha = 1;
+              pieceContainer.eventMode = 'none';
+              continue;
+            }
+
+            let heldRemote = false;
+            for (const [uid, set] of remoteLockedPieces) {
+              if (String(uid) === me) continue;
+              if (set.has(id)) {
+                heldRemote = true;
+                break;
+              }
+            }
+
+            if (heldRemote) {
+              pieceContainer.alpha = 0.5;
+              pieceContainer.eventMode = 'none';
+              continue;
+            }
+
+            if ((isDragging && dragCluster.has(id)) || (selectedCluster && selectedCluster.has(id))) {
+              pieceContainer.alpha = 1;
+              pieceContainer.eventMode = 'static';
+              continue;
+            }
+
+            pieceContainer.alpha = 1;
+            pieceContainer.eventMode = 'static';
           }
         };
 
@@ -1890,11 +2049,7 @@ export default function PuzzleBoard({
           await supabase.from('pixi_scores').upsert({ room_id: roomId, username, score: newScore }, { onConflict: 'room_id, username' });
           
           // Broadcast score update
-          channelRef.current?.send({
-            type: 'broadcast',
-            event: 'scoreUpdate',
-            payload: { username, score: newScore }
-          });
+          enqueueRealtimeBroadcast('scoreUpdate', { username, score: newScore });
         };
 
         const getConnectedCluster = (startId: number) => {
@@ -2421,14 +2576,10 @@ export default function PuzzleBoard({
           if (cursorData) {
             cursorData.container.destroy();
             cursors.delete(botUsername);
-            channelRef.current?.send({
-              type: 'broadcast',
-              event: 'cursorMove',
-              payload: {
-                username: botUsername,
-                x: -9999,
-                y: -9999
-              }
+            enqueueRealtimeBroadcast('cursorMove', {
+              username: botUsername,
+              x: -9999,
+              y: -9999,
             });
           }
 
@@ -2742,14 +2893,10 @@ export default function PuzzleBoard({
           if (cursorData) {
             cursorData.container.destroy();
             cursors.delete(botUsername);
-            channelRef.current?.send({
-              type: 'broadcast',
-              event: 'cursorMove',
-              payload: {
-                username: botUsername,
-                x: -9999,
-                y: -9999
-              }
+            enqueueRealtimeBroadcast('cursorMove', {
+              username: botUsername,
+              x: -9999,
+              y: -9999,
             });
           }
 
@@ -3534,12 +3681,17 @@ export default function PuzzleBoard({
             
             e.stopPropagation(); // 조각 클릭 시 배경 패닝 이벤트 방지
 
+            const startCluster = getConnectedCluster(i);
+            if (isClusterHeldRemotely(startCluster)) {
+              return;
+            }
+
             touchStartPos = { x: e.global.x, y: e.global.y };
             isTouchDraggingPiece = false;
             isDragging = true;
             dragStartPieceId = i;
-            
-            dragCluster = getConnectedCluster(i);
+
+            dragCluster = startCluster;
             const localPos = e.getLocalPosition(world);
             dragOffsets.clear();
             dragCluster.forEach(id => {
@@ -3548,6 +3700,8 @@ export default function PuzzleBoard({
               targetPositions.delete(id);
             });
             currentShiftY = 0;
+
+            sendLockBatch(Array.from(dragCluster));
 
             // On both touch and mouse, we don't start dragging immediately.
             // We wait for movement to distinguish between tap and drag.
@@ -3952,7 +4106,7 @@ export default function PuzzleBoard({
         };
 
         const scheduleDeferredBevelUpgrades = () => {
-          if (!DEFER_PIECE_BEVEL_UPGRADE || !FAST_PIECE_INIT) return;
+          if (!deferBevelUpgrade) return;
           let nextId = 0;
           const step = () => {
             deferredBevelRafId = null;
@@ -3991,16 +4145,50 @@ export default function PuzzleBoard({
         bumpProgress(100);
         setIsLoading(false);
 
-        if (DEFER_PIECE_BEVEL_UPGRADE && FAST_PIECE_INIT) {
+        if (deferBevelUpgrade) {
           requestAnimationFrame(() => {
             if (isMounted) scheduleDeferredBevelUpgrades();
           });
         }
 
+        /** 퇴장 등으로 unlock 브로드캐스트가 없을 때: 맵만 지우면 alpha=0.5가 남으므로 피스 UI까지 복구 */
+        const releaseVisualLocksForDepartedUser = (username: string) => {
+          const lockedSet = remoteLockedPieces.get(username);
+          if (lockedSet) {
+            lockedSet.forEach((id: number) => {
+              const pieceContainer = pieces.current.get(id);
+              if (pieceContainer) {
+                pieceContainer.alpha = 1;
+                const col = id % GRID_COLS;
+                const row = Math.floor(id / GRID_COLS);
+                const targetX = boardStartX + col * pieceWidth;
+                const targetY = boardStartY + row * pieceHeight;
+                if (Math.abs(pieceContainer.x - targetX) >= 1 || Math.abs(pieceContainer.y - targetY) >= 1) {
+                  pieceContainer.eventMode = "static";
+                }
+              }
+            });
+          }
+          remoteLockedPieces.delete(username);
+        };
+
         // 3. Supabase Realtime 수신
         const channel = supabase.channel(`room_${roomId}`);
         channelRef.current = channel;
-        
+
+        enqueueRealtimeBroadcast = (event: string, payload: unknown) => {
+          const ch = channelRef.current;
+          if (!ch) return;
+          if (realtimeBroadcastReady) {
+            void ch.send({ type: 'broadcast', event, payload });
+          } else {
+            realtimeBroadcastQueue.push({ event, payload });
+            if (realtimeBroadcastQueue.length > 250) {
+              realtimeBroadcastQueue.splice(0, realtimeBroadcastQueue.length - 250);
+            }
+          }
+        };
+
         channel
           .on('broadcast', { event: 'moveBatch' }, ({ payload }) => {
             payload.updates.forEach((u: any) => {
@@ -4034,47 +4222,26 @@ export default function PuzzleBoard({
           .on('broadcast', { event: 'lock' }, ({ payload }) => {
             const userId = payload.userId;
             if (userId) {
-              if (!remoteLockedPieces.has(userId)) {
-                remoteLockedPieces.set(userId, new Set());
+              const uid = String(userId);
+              abortLocalInteractionForRemoteClaim(uid, payload.pieceIds);
+              if (!remoteLockedPieces.has(uid)) {
+                remoteLockedPieces.set(uid, new Set());
               }
-              const userLocked = remoteLockedPieces.get(userId)!;
+              const userLocked = remoteLockedPieces.get(uid)!;
               payload.pieceIds.forEach((id: number) => userLocked.add(id));
             }
-
-            payload.pieceIds.forEach((id: number) => {
-              const pieceContainer = pieces.current.get(id);
-              if (pieceContainer) {
-                // 자신이 드래그 중인 조각은 무시
-                if ((isDragging && dragCluster.has(id)) || (selectedCluster && selectedCluster.has(id))) return;
-                
-                pieceContainer.alpha = 0.5;
-                pieceContainer.eventMode = 'none';
-              }
-            });
+            refreshRemoteLockVisuals();
           })
           .on('broadcast', { event: 'unlock' }, ({ payload }) => {
             const userId = payload.userId;
-            if (userId && remoteLockedPieces.has(userId)) {
-              const userLocked = remoteLockedPieces.get(userId)!;
-              payload.pieceIds.forEach((id: number) => userLocked.delete(id));
-            }
-
-            payload.pieceIds.forEach((id: number) => {
-              const pieceContainer = pieces.current.get(id);
-              if (pieceContainer) {
-                pieceContainer.alpha = 1;
-                
-                // 완전히 맞춰진 조각이 아니라면 다시 상호작용 가능하게 복구
-                const col = id % GRID_COLS;
-                const row = Math.floor(id / GRID_COLS);
-                const targetX = boardStartX + col * pieceWidth;
-                const targetY = boardStartY + row * pieceHeight;
-                
-                if (Math.abs(pieceContainer.x - targetX) >= 1 || Math.abs(pieceContainer.y - targetY) >= 1) {
-                  pieceContainer.eventMode = 'static';
-                }
+            if (userId) {
+              const uid = String(userId);
+              if (remoteLockedPieces.has(uid)) {
+                const userLocked = remoteLockedPieces.get(uid)!;
+                payload.pieceIds.forEach((id: number) => userLocked.delete(id));
               }
-            });
+            }
+            refreshRemoteLockVisuals();
           })
           .on('broadcast', { event: 'scoreUpdate' }, ({ payload }) => {
             setScores(prev => {
@@ -4127,27 +4294,72 @@ export default function PuzzleBoard({
           .on('presence', { event: 'sync' }, () => {
             const state = channel.presenceState();
             const users = new Set<string>();
+            const fromPresence = new Map<string, Set<number>>();
             for (const key in state) {
               state[key].forEach((p: any) => {
-                if (p.user && !isBotLikeUser(p.user)) users.add(p.user);
+                if (!p?.user || isBotLikeUser(p.user)) return;
+                const u = String(p.user);
+                users.add(u);
+                const raw = p.lockedPieceIds;
+                const ids = Array.isArray(raw) ? raw : [];
+                if (!fromPresence.has(u)) fromPresence.set(u, new Set());
+                const bucket = fromPresence.get(u)!;
+                ids.forEach((id: unknown) => {
+                  if (typeof id === 'number' && Number.isFinite(id)) bucket.add(id);
+                });
               });
             }
             setPlayerCount(users.size);
             setActiveUsers(users);
-            
+
+            for (const uid of [...remoteLockedPieces.keys()]) {
+              if (uid === 'bot') continue;
+              if (!users.has(uid)) {
+                releaseVisualLocksForDepartedUser(uid);
+              }
+            }
+            users.forEach((u) => {
+              remoteLockedPieces.set(u, new Set(fromPresence.get(u) ?? []));
+            });
+            refreshRemoteLockVisuals();
+
             // Remove cursors for users who left
             cursors.forEach((cursorData, username) => {
-              if (!users.has(username) && username !== 'bot') {
+              if (!users.has(username) && username !== "bot") {
                 cursorData.container.destroy();
                 cursors.delete(username);
-                remoteLockedPieces.delete(username);
               }
             });
           })
           .subscribe(async (status) => {
             if (status === 'SUBSCRIBED') {
+              realtimeBroadcastReady = true;
+              const ch = channelRef.current;
+              if (ch) {
+                while (realtimeBroadcastQueue.length > 0) {
+                  const item = realtimeBroadcastQueue.shift()!;
+                  void ch.send({ type: 'broadcast', event: item.event, payload: item.payload });
+                }
+              }
               const currentUsername = user ? user.username : localStorage.getItem('puzzle_guest_name');
-              await channel.track({ user: currentUsername });
+              const me = currentUsername != null && currentUsername !== '' ? String(currentUsername) : 'guest';
+              localPresenceLockIds.clear();
+              if (selectedCluster) {
+                selectedCluster.forEach((id) => localPresenceLockIds.add(id));
+              }
+              if (isDragging && dragCluster.size > 0) {
+                dragCluster.forEach((id) => localPresenceLockIds.add(id));
+              }
+              await channel.track({
+                user: me,
+                lockedPieceIds: Array.from(localPresenceLockIds),
+              });
+            } else if (
+              status === 'CLOSED' ||
+              status === 'CHANNEL_ERROR' ||
+              status === 'TIMED_OUT'
+            ) {
+              realtimeBroadcastReady = false;
             }
           });
 
@@ -4180,6 +4392,9 @@ export default function PuzzleBoard({
 
     return () => {
       isMounted = false;
+      realtimeBroadcastReady = false;
+      realtimeBroadcastQueue.length = 0;
+      enqueueRealtimeBroadcast = () => {};
       if (deferredBevelRafId != null) {
         cancelAnimationFrame(deferredBevelRafId);
         deferredBevelRafId = null;
@@ -4197,6 +4412,7 @@ export default function PuzzleBoard({
       appInstance = null;
       objectUrlRef.current = null;
       if (channelRef.current) {
+        releaseOwnedPieceLocks?.();
         // Presence ghost를 줄이기 위해 untrack 후 unsubscribe
         channelRef.current.untrack?.();
         channelRef.current.unsubscribe();
