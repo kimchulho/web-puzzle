@@ -32,9 +32,9 @@ function ensureTossAdsInitialized(): Promise<boolean> {
   });
 }
 
-/** 배너 래퍼 paddingTop + 슬롯 height + paddingBottom(최소) — 로비 스크롤 하단 여백 계산용 */
+/** 배너 슬롯 높이 + (추가 상하 패딩 없음) — 로비 스크롤 하단 여백 계산용 */
 export const TOSS_LOBBY_BANNER_SLOT_H = 96;
-export const TOSS_LOBBY_BANNER_VERTICAL_PAD = 8; // pt 4 + pb 4 (슬롯 위아래)
+export const TOSS_LOBBY_BANNER_VERTICAL_PAD = 0;
 
 /**
  * 토스 로비 하단 고정형 배너(리스트형 96px 권장).
@@ -89,8 +89,8 @@ export function TossLobbyBottomBanner({
     <div
       className="pointer-events-auto fixed bottom-0 left-0 right-0 z-40 w-full border-t border-[#D9E8FF] bg-[#F4F8FF] shadow-[0_-4px_24px_rgba(47,111,228,0.08)]"
       style={{
-        paddingTop: 4,
-        paddingBottom: safeAreaBottom + 4,
+        paddingTop: 0,
+        paddingBottom: safeAreaBottom,
         paddingLeft: safeAreaLeft,
         paddingRight: safeAreaRight,
       }}

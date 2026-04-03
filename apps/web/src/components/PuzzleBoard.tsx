@@ -646,6 +646,7 @@ export default function PuzzleBoard({
         let doubleTapZoomStartY = 0;
         let doubleTapInitialScale = 1;
         let doubleTapWorldPos = { x: 0, y: 0 };
+        let suppressDoubleTapUntil = 0;
 
         let selectedCluster: Set<number> | null = null;
         let selectedOffsets = new Map<number, {x: number, y: number}>();
@@ -1027,6 +1028,11 @@ export default function PuzzleBoard({
                 isDragging = false;
                 return;
               }
+              if (e.pointerType !== 'mouse') {
+                // Sticky-drag select tap should not be interpreted as first tap of a double-tap zoom.
+                suppressDoubleTapUntil = Date.now() + 380;
+                lastTapTime = 0;
+              }
               selectedCluster = dragCluster;
               topZIndex++;
               selectedCluster.forEach(id => {
@@ -1341,22 +1347,28 @@ export default function PuzzleBoard({
           const currentTime = Date.now();
           
           if (e.touches.length === 1) {
-            const timeDiff = currentTime - lastTapTime;
-            if (timeDiff > 0 && timeDiff < 300) {
-              isDoubleTapZooming = true;
-              doubleTapZoomStartY = e.touches[0].clientY;
-              doubleTapInitialScale = world.scale.x;
-              
-              const rect = canvas.getBoundingClientRect();
-              const centerX = e.touches[0].clientX - rect.left;
-              const centerY = e.touches[0].clientY - rect.top;
-              doubleTapWorldPos = {
-                x: (centerX - world.x) / world.scale.x,
-                y: (centerY - world.y) / world.scale.y
-              };
-              e.preventDefault();
+            const isSuppressed = currentTime < suppressDoubleTapUntil;
+            if (!isSuppressed) {
+              const timeDiff = currentTime - lastTapTime;
+              if (timeDiff > 0 && timeDiff < 300) {
+                isDoubleTapZooming = true;
+                doubleTapZoomStartY = e.touches[0].clientY;
+                doubleTapInitialScale = world.scale.x;
+                
+                const rect = canvas.getBoundingClientRect();
+                const centerX = e.touches[0].clientX - rect.left;
+                const centerY = e.touches[0].clientY - rect.top;
+                doubleTapWorldPos = {
+                  x: (centerX - world.x) / world.scale.x,
+                  y: (centerY - world.y) / world.scale.y
+                };
+                e.preventDefault();
+              }
+              lastTapTime = currentTime;
+            } else {
+              isDoubleTapZooming = false;
+              lastTapTime = 0;
             }
-            lastTapTime = currentTime;
           } else if (e.touches.length >= 2) {
             isDoubleTapZooming = false;
             e.preventDefault();
