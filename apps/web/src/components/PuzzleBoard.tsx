@@ -16,6 +16,7 @@ import {
   LockDeniedPayload,
   LockReleasedPayload,
   ROOM_EVENTS,
+  ScoreSyncPayload,
   SyncTimePayload,
 } from "@contracts/realtime";
 import { REALTIME_CHANNEL_STATES } from '@supabase/supabase-js';
@@ -140,6 +141,7 @@ export default function PuzzleBoard({
   const socketLockAppliedRef = useRef<((payload: LockAppliedPayload) => void) | null>(null);
   const socketLockReleasedRef = useRef<((payload: LockReleasedPayload) => void) | null>(null);
   const socketLockDeniedRef = useRef<((payload: LockDeniedPayload) => void) | null>(null);
+  const socketScoreSyncRef = useRef<((payload: ScoreSyncPayload) => void) | null>(null);
   const mainTextureRef = useRef<PIXI.Texture | null>(null);
   const objectUrlRef = useRef<string | null>(null);
   const gatherBordersRef = useRef<(() => void) | null>(null);
@@ -420,6 +422,9 @@ export default function PuzzleBoard({
     });
     socket.on(ROOM_EVENTS.LockDenied, (payload: LockDeniedPayload) => {
       socketLockDeniedRef.current?.(payload);
+    });
+    socket.on(ROOM_EVENTS.ScoreSync, (payload: ScoreSyncPayload) => {
+      socketScoreSyncRef.current?.(payload);
     });
 
     return () => {
@@ -1950,6 +1955,22 @@ export default function PuzzleBoard({
           forceReleaseLocalDeniedLocks(payload.pieceIds);
         };
 
+        socketScoreSyncRef.current = (payload) => {
+          if (payload.roomId !== roomId) return;
+          const username = String(payload.username ?? "").trim();
+          const score = Number(payload.score ?? 0);
+          if (!username || !Number.isFinite(score)) return;
+          setScores((prev) => {
+            const existing = prev.find((s) => s.username === username);
+            if (existing) {
+              return prev
+                .map((s) => (s.username === username ? { ...s, score } : s))
+                .sort((a, b) => b.score - a.score);
+            }
+            return [...prev, { username, score }].sort((a, b) => b.score - a.score);
+          });
+        };
+
         const savePiecesState = async (updates: {piece_index: number, x: number, y: number, is_locked: boolean}[]) => {
           if (updates.length === 0) return;
           try {
@@ -2120,51 +2141,26 @@ export default function PuzzleBoard({
               }
             }
 
-            // Check if we are the first to complete it
-            const { data: roomData } = await supabase.from('pixi_rooms').select('status').eq('id', roomId).single();
-            
-            if (roomData && roomData.status !== 'completed') {
-              const { error } = await supabase.from('pixi_rooms').update({ status: 'completed' }).eq('id', roomId);
-              if (error) {
-                console.error("Failed to update room status to completed:", error);
-              } else {
-                // Distribute rewards to all participants based on their actual placed pieces
-                const { data: roomScores } = await supabase.from('pixi_scores').select('*').eq('room_id', roomId);
-                if (roomScores) {
-                  for (const rs of roomScores) {
-                    // Find user by username (guests will safely fail this check)
-                    const { data: uData } = await supabase.from('pixi_users').select('id, completed_puzzles, placed_pieces').eq('username', rs.username).maybeSingle();
-                    if (uData) {
-                      const newCompleted = (uData.completed_puzzles || 0) + 1;
-                      const newPlaced = (uData.placed_pieces || 0) + rs.score;
-                      
-                      await supabase.from('pixi_users').update({
-                        completed_puzzles: newCompleted,
-                        placed_pieces: newPlaced
-                      }).eq('id', uData.id);
-
-                      // If this is the current user, update local state
-                      if (user && user.username === rs.username) {
-                        const updatedUser = { ...user, completed_puzzles: newCompleted, placed_pieces: newPlaced };
-                        localStorage.setItem('puzzle_user', JSON.stringify(updatedUser));
-                        setUser(updatedUser);
-                      }
-                    }
-                  }
-                }
-              }
-            } else if (user && user.id) {
-              // Room was already completed, just sync our local user state
-              const { data: uData } = await supabase.from('pixi_users').select('completed_puzzles, placed_pieces').eq('id', user.id).maybeSingle();
-              if (uData) {
-                const updatedUser = { ...user, completed_puzzles: uData.completed_puzzles, placed_pieces: uData.placed_pieces };
-                localStorage.setItem('puzzle_user', JSON.stringify(updatedUser));
-                setUser(updatedUser);
-              }
-            }
-
             if (socketRef.current) {
               socketRef.current.emit(ROOM_EVENTS.PuzzleCompleted, roomId);
+            }
+            // 서버 권위 보상 반영 이후 내 프로필 숫자를 1회 동기화
+            if (user?.id) {
+              setTimeout(async () => {
+                const { data: uData } = await supabase
+                  .from('pixi_users')
+                  .select('completed_puzzles, placed_pieces')
+                  .eq('id', user.id)
+                  .maybeSingle();
+                if (!uData) return;
+                const updatedUser = {
+                  ...user,
+                  completed_puzzles: uData.completed_puzzles,
+                  placed_pieces: uData.placed_pieces,
+                };
+                localStorage.setItem('puzzle_user', JSON.stringify(updatedUser));
+                setUser(updatedUser);
+              }, 700);
             }
             triggerFireworks();
             zoomToCompletedPuzzle(true);
@@ -2201,24 +2197,29 @@ export default function PuzzleBoard({
         const updateScore = async (points: number) => {
           if (points <= 0) return;
           const username = user ? user.username : localStorage.getItem('puzzle_guest_name');
+          const uname = username != null && username !== '' ? String(username) : 'guest';
           
           // Optimistic UI update
           setScores(prev => {
-            const existing = prev.find(s => s.username === username);
+            const existing = prev.find(s => s.username === uname);
             if (existing) {
-              return prev.map(s => s.username === username ? { ...s, score: s.score + points } : s).sort((a, b) => b.score - a.score);
+              return prev.map(s => s.username === uname ? { ...s, score: s.score + points } : s).sort((a, b) => b.score - a.score);
             } else {
-              return [...prev, { username, score: points }].sort((a, b) => b.score - a.score);
+              return [...prev, { username: uname, score: points }].sort((a, b) => b.score - a.score);
             }
           });
 
-          // DB update
-          const { data } = await supabase.from('pixi_scores').select('score').eq('room_id', roomId).eq('username', username).maybeSingle();
+          // 서버 권위 점수 갱신
+          const socket = socketRef.current;
+          if (socket && socket.connected) {
+            socket.emit(ROOM_EVENTS.ScoreDelta, { roomId, username: uname, delta: points });
+            return;
+          }
+          // Fallback for environments where socket is unavailable.
+          const { data } = await supabase.from('pixi_scores').select('score').eq('room_id', roomId).eq('username', uname).maybeSingle();
           const newScore = (data?.score || 0) + points;
-          await supabase.from('pixi_scores').upsert({ room_id: roomId, username, score: newScore }, { onConflict: 'room_id, username' });
-          
-          // Broadcast score update
-          enqueueRealtimeBroadcast('scoreUpdate', { username, score: newScore });
+          await supabase.from('pixi_scores').upsert({ room_id: roomId, username: uname, score: newScore }, { onConflict: 'room_id, username' });
+          enqueueRealtimeBroadcast('scoreUpdate', { username: uname, score: newScore });
         };
 
         const getConnectedCluster = (startId: number) => {
@@ -4918,6 +4919,7 @@ export default function PuzzleBoard({
       socketLockAppliedRef.current = null;
       socketLockReleasedRef.current = null;
       socketLockDeniedRef.current = null;
+      socketScoreSyncRef.current = null;
       clearInterval(peerStaleUiTimer);
       peerLastSeenMsRef.current.clear();
       if (realtimeHealthTimer != null) {

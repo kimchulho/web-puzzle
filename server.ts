@@ -16,6 +16,8 @@ import {
   LockDeniedPayload,
   LockRequestPayload,
   LockReleasedPayload,
+  ScoreDeltaPayload,
+  ScoreSyncPayload,
   SyncTimePayload,
   UnlockRequestPayload,
 } from "./packages/contracts/realtime";
@@ -546,6 +548,7 @@ async function startServer() {
     isCompleted: boolean 
   }>();
   const roomPieceLocks = new Map<number, Map<number, { socketId: string; userId: string }>>();
+  const roomScoreCache = new Map<number, Map<string, number>>();
   const socketOwnedPieceIds = new Map<string, Map<number, Set<number>>>();
   const socketUserId = new Map<string, string>();
 
@@ -597,6 +600,63 @@ async function startServer() {
         const payload: LockReleasedPayload = { roomId, userId, pieceIds: released };
         io.to(roomId.toString()).emit(ROOM_EVENTS.LockReleased, payload);
       }
+    };
+    const getRoomScoreMap = async (roomId: number): Promise<Map<string, number>> => {
+      const cached = roomScoreCache.get(roomId);
+      if (cached) return cached;
+      const { data, error } = await supabase
+        .from("pixi_scores")
+        .select("username, score")
+        .eq("room_id", roomId);
+      if (error) {
+        console.warn("[score-cache/load]", error.message);
+        const empty = new Map<string, number>();
+        roomScoreCache.set(roomId, empty);
+        return empty;
+      }
+      const m = new Map<string, number>();
+      for (const row of data ?? []) {
+        const username = String((row as { username?: unknown }).username ?? "").trim();
+        if (!username) continue;
+        const scoreRaw = Number((row as { score?: unknown }).score ?? 0);
+        m.set(username, Number.isFinite(scoreRaw) ? scoreRaw : 0);
+      }
+      roomScoreCache.set(roomId, m);
+      return m;
+    };
+    const distributeCompletionRewards = async (roomId: number) => {
+      const scoreMap = await getRoomScoreMap(roomId);
+      const roomScores = [...scoreMap.entries()]
+        .map(([username, score]) => ({ username, score: Number.isFinite(score) ? score : 0 }))
+        .filter((x) => x.username && x.score > 0);
+      if (roomScores.length === 0) return;
+      const usernames = roomScores.map((x) => x.username);
+      const { data: users, error: usersError } = await supabase
+        .from("pixi_users")
+        .select("id, username, completed_puzzles, placed_pieces")
+        .in("username", usernames);
+      if (usersError) {
+        console.warn("[completion-reward/load-users]", usersError.message);
+        return;
+      }
+      const byName = new Map(
+        (users ?? []).map((u) => [String((u as { username: unknown }).username), u as any])
+      );
+      await Promise.all(
+        roomScores.map(async ({ username, score }) => {
+          const u = byName.get(username);
+          if (!u) return;
+          const completed = Number(u.completed_puzzles ?? 0) + 1;
+          const placed = Number(u.placed_pieces ?? 0) + score;
+          const { error } = await supabase
+            .from("pixi_users")
+            .update({ completed_puzzles: completed, placed_pieces: placed })
+            .eq("id", u.id);
+          if (error) {
+            console.warn("[completion-reward/update-user]", { username, message: error.message });
+          }
+        })
+      );
     };
 
     socket.on(ROOM_EVENTS.JoinRoom, async (roomId: number) => {
@@ -710,6 +770,26 @@ async function startServer() {
       }
     });
 
+    socket.on(ROOM_EVENTS.ScoreDelta, async (raw: ScoreDeltaPayload) => {
+      const roomId = Number(raw?.roomId);
+      if (!Number.isFinite(roomId) || roomId <= 0 || currentRoomId !== roomId) return;
+      const username = String(raw?.username ?? "").trim();
+      if (!username) return;
+      const delta = Math.max(0, Math.floor(Number(raw?.delta ?? 0)));
+      if (!Number.isFinite(delta) || delta <= 0) return;
+      const scoreMap = await getRoomScoreMap(roomId);
+      const nextScore = (scoreMap.get(username) ?? 0) + delta;
+      scoreMap.set(username, nextScore);
+      const payload: ScoreSyncPayload = { roomId, username, score: nextScore };
+      io.to(roomId.toString()).emit(ROOM_EVENTS.ScoreSync, payload);
+      const { error } = await supabase
+        .from("pixi_scores")
+        .upsert({ room_id: roomId, username, score: nextScore }, { onConflict: "room_id,username" });
+      if (error) {
+        console.warn("[score-delta/upsert]", error.message);
+      }
+    });
+
     socket.on(ROOM_EVENTS.PuzzleCompleted, async (roomId: number) => {
       const room = roomStates.get(roomId);
       if (room && !room.isCompleted) {
@@ -728,6 +808,7 @@ async function startServer() {
             status: "completed" 
           })
           .eq("id", roomId);
+        await distributeCompletionRewards(roomId);
           
         // 완성 시 모든 유저에게 정지된 최종 시간 동기화
         const completedPayload: SyncTimePayload = {
