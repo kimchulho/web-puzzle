@@ -97,6 +97,13 @@ export default function App() {
   const handleJoinRoom = (roomId: number, imageUrl: string, pieceCount: number) => {
     const roomCode = encodeRoomId(roomId);
     window.history.pushState({}, '', `/?room=${roomCode}`);
+    // SPA 전환 시 모바일 브라우저 주소줄/스크롤 상태를 초기화해
+    // 퍼즐 상단 툴바 safe-area 계산이 안정적으로 잡히게 한다.
+    try {
+      window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+    } catch {
+      window.scrollTo(0, 0);
+    }
     setCurrentRoom({ id: roomId, imageUrl, pieceCount });
   };
 
