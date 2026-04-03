@@ -192,6 +192,8 @@ export default function PuzzleBoard({
   /** 가로(와이드) 툴바 getBoundingClientRect().width (회전 후 화면상 두께, CSS px). 0 = 아직 측정 전 */
   const [tossWideToolbarWidth, setTossWideToolbarWidth] = useState(0);
   const tossWideToolbarMeasureRef = useRef<HTMLDivElement | null>(null);
+  const snapAudioElRef = useRef<HTMLAudioElement | null>(null);
+  const snapAudioLastAtRef = useRef(0);
 
   const handleShareLink = () => {
     const url = `${window.location.origin}/?room=${encodeRoomId(roomId)}`;
@@ -665,6 +667,7 @@ export default function PuzzleBoard({
         let isTouchDraggingPiece = false;
         let pointerGlobalPos = { x: 0, y: 0 };
         let dragStartPieceId = -1;
+        const snappedSoundedPieceIds = new Set<number>();
         
         const targetPositions = new Map<number, {x: number, y: number}>();
         const fallingPieces: { id: number, container: PIXI.Container, targetX: number, targetY: number, progress: number, delay: number }[] = [];
@@ -2245,6 +2248,28 @@ export default function PuzzleBoard({
             app.ticker.add(animateShine);
           }, 500);
         };
+        const SNAP_SOUND_URL =
+          "https://ewbjogsolylcbfmpmyfa.supabase.co/storage/v1/object/public/puzzle_images/sound/dragon-studio-button-press-382713.mp3";
+        const playSnapSound = () => {
+          const now = Date.now();
+          if (now - snapAudioLastAtRef.current < 90) return;
+          snapAudioLastAtRef.current = now;
+          try {
+            if (!snapAudioElRef.current) {
+              const audio = new Audio(SNAP_SOUND_URL);
+              audio.preload = "auto";
+              audio.volume = 0.35;
+              snapAudioElRef.current = audio;
+            }
+            const a = snapAudioElRef.current;
+            if (!a) return;
+            a.currentTime = 0;
+            const p = a.play();
+            if (p && typeof p.catch === "function") p.catch(() => {});
+          } catch {
+            // ignore audio errors on restricted autoplay environments
+          }
+        };
 
         const checkCompletion = async () => {
           if (isCompletedRef.current) return;
@@ -2510,6 +2535,19 @@ export default function PuzzleBoard({
             }
             dbUpdates.push({ piece_index: id, x: p.x, y: p.y, is_locked: isLocked });
           });
+
+          let localNewLocked = false;
+          if (lockedPieceIds.size > 0) {
+            lockedPieceIds.forEach((id) => {
+              if (!snappedSoundedPieceIds.has(id)) {
+                snappedSoundedPieceIds.add(id);
+                localNewLocked = true;
+              }
+            });
+          }
+          if (localNewLocked) {
+            playSnapSound();
+          }
 
           if (updates.length > 0) {
             updates.forEach((u) => {
@@ -3936,6 +3974,7 @@ export default function PuzzleBoard({
             pieceContainer.eventMode = 'none';
             pieceContainer.zIndex = 0;
             initialPlacedCount++;
+            snappedSoundedPieceIds.add(i);
           } else {
             pieceContainer.eventMode = 'static';
             pieceContainer.cursor = 'pointer';
@@ -4752,6 +4791,7 @@ export default function PuzzleBoard({
 
           const handleRemoteMoveBatch = (updatesRaw: unknown) => {
             const updates = Array.isArray(updatesRaw) ? updatesRaw : [];
+            let remoteLockedNow = false;
             updates.forEach((u: any) => {
               const pieceContainer = pieces.current.get(u.pieceId);
               if (pieceContainer) {
@@ -4767,6 +4807,10 @@ export default function PuzzleBoard({
                 const targetY = boardStartY + row * pieceHeight;
                 const shouldLock = u.isLocked === true || (Math.abs(u.x - targetX) < 1 && Math.abs(u.y - targetY) < 1);
                 if (shouldLock) {
+                  if (!snappedSoundedPieceIds.has(u.pieceId)) {
+                    snappedSoundedPieceIds.add(u.pieceId);
+                    remoteLockedNow = true;
+                  }
                   pieceContainer.eventMode = 'none';
                   pieceContainer.zIndex = 0;
                   pieceContainer.alpha = 1; // 잠금 해제 및 원래 투명도 복구
@@ -4777,6 +4821,9 @@ export default function PuzzleBoard({
                 }
               }
             });
+            if (remoteLockedNow) {
+              playSnapSound();
+            }
           };
 
           const handleRemoteCursorMove = (payload: { username?: unknown; x?: unknown; y?: unknown }) => {
@@ -5123,6 +5170,10 @@ export default function PuzzleBoard({
       mainTextureRef.current = null;
       appInstance = null;
       objectUrlRef.current = null;
+      if (snapAudioElRef.current) {
+        snapAudioElRef.current.pause();
+        snapAudioElRef.current = null;
+      }
       if (channelRef.current) {
         releaseOwnedPieceLocks?.();
         const ch = channelRef.current;

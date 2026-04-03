@@ -1032,7 +1032,7 @@ const Lobby = ({
       <motion.div 
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        className="w-full grid grid-cols-1 gap-5 max-w-7xl lg:grid-cols-3 md:grid-cols-2"
+        className="w-full grid grid-cols-1 gap-6 max-w-7xl lg:grid-cols-3 md:grid-cols-2"
         style={
           tossUi
             ? { ...tossContentPadX, paddingTop: 6, boxSizing: "border-box" as const }
@@ -1041,9 +1041,7 @@ const Lobby = ({
       >
         {/* Left Column: Create/Join Form */}
         <div
-          className={`rounded-3xl p-5 text-center h-fit border ${
-            tossSkin ? `${tossSkin.card}` : "bg-slate-900 border-slate-800"
-          }`}
+          className="text-center h-fit px-1"
         >
           {!tossUi && (
             <>
@@ -1364,11 +1362,13 @@ const Lobby = ({
 
         {/* Middle Column: Active Rooms Gallery */}
         <div
-          className={`rounded-3xl p-5 flex flex-col h-[600px] border ${
-            tossSkin ? tossSkin.card : "bg-slate-900 border-slate-800"
-          }`}
+          className="flex flex-col h-[600px]"
         >
-          <div className="mb-4">
+          <div
+            className={`mb-3 pb-3 border-b ${
+              tossSkin ? "border-[#D9E8FF]" : "border-slate-800/80"
+            }`}
+          >
             <div className="flex items-center justify-between gap-2">
               <h2
                 className={`text-xl font-bold flex items-center gap-2 min-w-0 ${
@@ -1591,11 +1591,13 @@ const Lobby = ({
 
         {/* Right Column: Completed Rooms Gallery */}
         <div
-          className={`rounded-3xl p-5 flex flex-col h-[600px] md:col-span-2 lg:col-span-1 border ${
-            tossSkin ? tossSkin.card : "bg-slate-900 border-slate-800"
-          }`}
+          className="flex flex-col h-[600px] md:col-span-2 lg:col-span-1"
         >
-          <div className="mb-4">
+          <div
+            className={`mb-3 pb-3 border-b ${
+              tossSkin ? "border-[#D9E8FF]" : "border-slate-800/80"
+            }`}
+          >
             <h2
               className={`text-xl font-bold flex items-center gap-2 ${
                 tossSkin ? tossSkin.heading : "text-white"
