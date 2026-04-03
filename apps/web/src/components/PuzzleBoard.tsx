@@ -4835,8 +4835,19 @@ export default function PuzzleBoard({
             const ch = channelRef.current;
             if (!ch) return;
             try {
+              const gameSocketHealthy = Boolean(socketRef.current?.connected);
               if (!supabase.realtime.isConnected()) {
                 realtimeBroadcastReady = false;
+                // 핵심 실시간(move/lock/score)은 Socket.IO 우선 경로를 사용하므로,
+                // 게임 소켓이 건강하면 Supabase 소켓 강제 재연결을 서두르지 않는다.
+                if (gameSocketHealthy) {
+                  const now = Date.now();
+                  if (now - lastClosedWarnAt > 15_000) {
+                    lastClosedWarnAt = now;
+                    rtWarn("supabase socket down; gameplay socket healthy (skip reconnect)");
+                  }
+                  return;
+                }
                 const now = Date.now();
                 if (now - lastManualConnectAt > 10_000) {
                   lastManualConnectAt = now;
@@ -4869,9 +4880,10 @@ export default function PuzzleBoard({
                     sinceSubscribedMs,
                   });
                 }
-                if (closedForMs >= 45_000 && sinceInboundMs >= 30_000 && sinceSubscribedMs >= 30_000) {
+                // 게임 소켓이 살아있다면 Supabase 채널 강제 recycle은 오히려 흔들림을 늘릴 수 있어 생략
+                if (!gameSocketHealthy && closedForMs >= 45_000 && sinceInboundMs >= 30_000 && sinceSubscribedMs >= 30_000) {
                   channelClosedSinceAt = null;
-                  rtWarn("channel stuck closed while socket connected → recycle", {
+                  rtWarn("channel stuck closed (supabase) → recycle", {
                     state: st,
                     closedForMs,
                     msSinceInbound: sinceInboundMs,
