@@ -536,6 +536,115 @@ async function startServer() {
     return res.status(204).end();
   });
 
+  app.get("/api/rooms/summary", async (req, res) => {
+    let userId: number | null = null;
+    const token = parseBearerToken(
+      typeof req.headers.authorization === "string" ? req.headers.authorization : undefined
+    );
+    if (token) {
+      try {
+        const decoded = jwt.verify(token, jwtSecret) as JwtPayload;
+        const sub = Number(decoded.sub);
+        if (Number.isFinite(sub) && sub > 0) userId = Math.floor(sub);
+      } catch {
+        // Public endpoint: ignore invalid bearer and continue without "my rooms".
+      }
+    }
+    const { data: activePublic, error: activePublicError } = await supabase
+      .from("pixi_rooms")
+      .select("*")
+      .eq("status", "active")
+      .eq("is_private", false)
+      .order("created_at", { ascending: false });
+    if (activePublicError) {
+      return res.status(500).json({ message: activePublicError.message });
+    }
+    let activeMine: any[] = [];
+    if (userId != null) {
+      const { data: mine, error: mineError } = await supabase
+        .from("pixi_rooms")
+        .select("*")
+        .eq("status", "active")
+        .eq("created_by", userId);
+      if (mineError) {
+        return res.status(500).json({ message: mineError.message });
+      }
+      activeMine = mine ?? [];
+    }
+    const merged = new Map<number, any>();
+    for (const r of activePublic ?? []) merged.set(Number(r.id), r);
+    for (const r of activeMine) {
+      const id = Number(r.id);
+      if (!merged.has(id)) merged.set(id, r);
+    }
+    const active = [...merged.values()];
+
+    const { data: completedPublic, error: completedError } = await supabase
+      .from("pixi_rooms")
+      .select("*")
+      .eq("status", "completed")
+      .eq("is_private", false)
+      .order("created_at", { ascending: false });
+    if (completedError) {
+      return res.status(500).json({ message: completedError.message });
+    }
+
+    const roomIds = active.map((r) => Number(r.id)).filter((id) => Number.isFinite(id));
+    const totalByRoom = new Map<number, number>();
+    const lockedByRoom = new Map<number, number>();
+    if (roomIds.length > 0) {
+      const { data: pieces, error: piecesError } = await supabase
+        .from("pixi_pieces")
+        .select("room_id,is_locked")
+        .in("room_id", roomIds);
+      if (piecesError) {
+        return res.status(500).json({ message: piecesError.message });
+      }
+      for (const row of pieces ?? []) {
+        const roomId = Number((row as { room_id: unknown }).room_id);
+        totalByRoom.set(roomId, (totalByRoom.get(roomId) ?? 0) + 1);
+        if ((row as { is_locked?: unknown }).is_locked === true) {
+          lockedByRoom.set(roomId, (lockedByRoom.get(roomId) ?? 0) + 1);
+        }
+      }
+    }
+
+    const newlyCompletedIds: number[] = [];
+    for (const room of active) {
+      const id = Number(room.id);
+      const total = totalByRoom.get(id) ?? Number(room.piece_count ?? 0);
+      const locked = lockedByRoom.get(id) ?? 0;
+      room.totalPieces = total > 0 ? total : Number(room.piece_count ?? 0);
+      room.snappedCount = locked;
+      room.currentPlayers = roomStates.get(id)?.users.size ?? 0;
+      if (room.totalPieces > 0 && room.totalPieces === room.snappedCount && room.status === "active") {
+        newlyCompletedIds.push(id);
+        room.status = "completed";
+      }
+    }
+    if (newlyCompletedIds.length > 0) {
+      const { error: markCompletedError } = await supabase
+        .from("pixi_rooms")
+        .update({ status: "completed" })
+        .in("id", newlyCompletedIds);
+      if (markCompletedError) {
+        console.warn("[rooms-summary/mark-completed]", markCompletedError.message);
+      }
+    }
+
+    const finalActive = active.filter((r) => r.status === "active");
+    const completedMerged = new Map<number, any>();
+    for (const r of completedPublic ?? []) completedMerged.set(Number(r.id), r);
+    for (const r of active.filter((x) => x.status === "completed")) {
+      completedMerged.set(Number(r.id), r);
+    }
+    const completedRooms = [...completedMerged.values()];
+    return res.json({
+      activeRooms: finalActive,
+      completedRooms,
+    });
+  });
+
   // ==========================================
   // Socket.io & Playtime Logic
   // ==========================================

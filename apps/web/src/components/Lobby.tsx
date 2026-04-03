@@ -21,8 +21,6 @@ const formatPlayTime = (seconds: number) => {
   return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
 };
 
-const isBotLikeUser = (name: unknown) =>
-  typeof name === 'string' && /(bot|봇)/i.test(name.trim());
 const WEB_REWARDED_AD_UNIT_PATH = '/23346390161/web_puzzle_rewarded';
 const GPT_SCRIPT_ID = 'google-publisher-tag-script';
 const REWARDED_DEBUG_PREFIX = '[RewardedAd]';
@@ -409,90 +407,25 @@ const Lobby = ({
         }
       }
 
-      const { data: activePublic } = await supabase
-        .from('pixi_rooms')
-        .select('*')
-        .eq('status', 'active')
-        .eq('is_private', false)
-        .order('created_at', { ascending: false });
-
-      let activeMine: any[] = [];
-      if (user?.id) {
-        const { data: mine } = await supabase
-          .from('pixi_rooms')
-          .select('*')
-          .eq('status', 'active')
-          .eq('created_by', user.id);
-        activeMine = mine || [];
+      const token =
+        typeof localStorage !== "undefined"
+          ? localStorage.getItem("puzzle_access_token")
+          : null;
+      const summaryRes = await fetch(apiUrl("/api/rooms/summary"), {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      });
+      if (!summaryRes.ok) {
+        console.error(`Failed to fetch room summary: HTTP ${summaryRes.status}`);
+        setActiveRooms([]);
+        setCompletedRooms([]);
+        return;
       }
-
-      const merged = new Map<number, any>();
-      for (const r of activePublic || []) merged.set(r.id, r);
-      for (const r of activeMine) {
-        if (!merged.has(r.id)) merged.set(r.id, r);
-      }
-      const active = Array.from(merged.values());
-      
-      const { data: completed } = await supabase
-        .from('pixi_rooms')
-        .select('*')
-        .eq('status', 'completed')
-        .eq('is_private', false)
-        .order('created_at', { ascending: false });
-
-      if (active && active.length > 0) {
-        await Promise.all(active.map(async (room) => {
-          const { count: total } = await supabase
-            .from('pixi_pieces')
-            .select('*', { count: 'exact', head: true })
-            .eq('room_id', room.id);
-            
-          const { count: locked } = await supabase
-            .from('pixi_pieces')
-            .select('*', { count: 'exact', head: true })
-            .eq('room_id', room.id)
-            .eq('is_locked', true);
-            
-          room.totalPieces = total || room.piece_count;
-          room.snappedCount = locked || 0;
-          
-          if (total === locked && total > 0 && room.status === 'active') {
-            const { error } = await supabase
-              .from('pixi_rooms')
-              .update({ status: 'completed' })
-              .eq('id', room.id);
-            if (error) {
-              console.error("Failed to auto-complete room:", error);
-            } else {
-              room.status = 'completed';
-            }
-          }
-        }));
-      }
-
-      const finalActive = active ? active.filter(r => r.status === 'active') : [];
-      const newlyCompleted = active ? active.filter(r => r.status === 'completed') : [];
-
-      if (finalActive.length > 0 || active?.length === 0) {
-        setActiveRooms(prev => {
-          return finalActive.map(newRoom => {
-            const existingRoom = prev.find(r => r.id === newRoom.id);
-            if (existingRoom && existingRoom.currentPlayers !== undefined) {
-              newRoom.currentPlayers = existingRoom.currentPlayers;
-            } else {
-              newRoom.currentPlayers = 0;
-            }
-            return newRoom;
-          });
-        });
-      }
-      
-      if (completed || newlyCompleted.length > 0) {
-        const allCompleted = [...(newlyCompleted || []), ...(completed || [])];
-        // remove duplicates
-        const uniqueCompleted = Array.from(new Map(allCompleted.map(item => [item.id, item])).values());
-        setCompletedRooms(uniqueCompleted);
-      }
+      const summary = (await summaryRes.json()) as {
+        activeRooms?: any[];
+        completedRooms?: any[];
+      };
+      setActiveRooms(Array.isArray(summary.activeRooms) ? summary.activeRooms : []);
+      setCompletedRooms(Array.isArray(summary.completedRooms) ? summary.completedRooms : []);
     } finally {
       if (background) {
         bumpRoomsRefreshing(-1);
@@ -516,33 +449,6 @@ const Lobby = ({
       supabase.removeChannel(channel);
     };
   }, [user?.id]);
-
-  useEffect(() => {
-    const presenceChannels: any[] = [];
-    
-    activeRooms.forEach(room => {
-      const channel = supabase.channel(`room_${room.id}`);
-      channel.on('presence', { event: 'sync' }, () => {
-        const state = channel.presenceState();
-        // 세션 수는 재연결 시 부풀 수 있어, 고유 사용자 수 기준으로 표시합니다.
-        const users = new Set<string>();
-        Object.values(state).forEach((sessions: any) => {
-          sessions.forEach((s: any) => {
-            if (s?.user && !isBotLikeUser(s.user)) users.add(String(s.user));
-          });
-        });
-        // user 메타가 없는 레거시 presence만 있는 경우를 대비한 보수적 fallback
-        const count = users.size > 0 ? users.size : Object.keys(state).length;
-        setActiveRooms(prev => prev.map(r => r.id === room.id ? { ...r, currentPlayers: count } : r));
-      });
-      channel.subscribe();
-      presenceChannels.push(channel);
-    });
-    
-    return () => {
-      presenceChannels.forEach(c => supabase.removeChannel(c));
-    };
-  }, [activeRooms.map(r => r.id).join(',')]);
 
   const handleCreateRoom = async () => {
     const currentImageUrl = imageUrl;
