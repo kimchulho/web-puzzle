@@ -12,6 +12,7 @@ import { Clock, Users, Trophy, ChevronLeft, X, Palette, LayoutGrid, Zap, Heart, 
 import { io, Socket } from 'socket.io-client';
 import confetti from 'canvas-confetti';
 import { ROOM_EVENTS, SyncTimePayload } from "@contracts/realtime";
+import { REALTIME_CHANNEL_STATES } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabaseClient';
 import { encodeRoomId } from '../lib/roomCode';
 import { recordUserRoomVisit } from '../lib/recordUserRoomVisit';
@@ -444,6 +445,7 @@ export default function PuzzleBoard({
     let realtimeBroadcastReady = false;
     const realtimeBroadcastQueue: { event: string; payload: unknown }[] = [];
     let enqueueRealtimeBroadcast: (event: string, payload: unknown) => void = () => {};
+    let realtimeHealthTimer: ReturnType<typeof setInterval> | null = null;
 
     // 1. Pixi Application 초기화
     const initPixi = async () => {
@@ -1654,7 +1656,7 @@ export default function PuzzleBoard({
 
         const sendMoveBatch = throttle((updates: {pieceId: number, x: number, y: number}[]) => {
           enqueueRealtimeBroadcast('moveBatch', { updates });
-        }, 50);
+        }, 80);
 
         const sendBotCursorMove = throttle((username: string, x: number, y: number) => {
           enqueueRealtimeBroadcast('cursorMove', { username, x, y });
@@ -4237,6 +4239,18 @@ export default function PuzzleBoard({
           if (realtimeBroadcastReady) {
             void ch.send({ type: 'broadcast', event, payload });
           } else {
+            if (event === 'moveBatch' && realtimeBroadcastQueue.length > 0) {
+              const last = realtimeBroadcastQueue[realtimeBroadcastQueue.length - 1];
+              if (last.event === 'moveBatch') {
+                const a = (last.payload as { updates?: { pieceId: number; x: number; y: number }[] }).updates ?? [];
+                const b = (payload as { updates?: { pieceId: number; x: number; y: number }[] }).updates ?? [];
+                const byId = new Map<number, { pieceId: number; x: number; y: number }>();
+                for (const u of a) byId.set(u.pieceId, u);
+                for (const u of b) byId.set(u.pieceId, u);
+                last.payload = { updates: Array.from(byId.values()) };
+                return;
+              }
+            }
             realtimeBroadcastQueue.push({ event, payload });
             if (realtimeBroadcastQueue.length > 250) {
               realtimeBroadcastQueue.splice(0, realtimeBroadcastQueue.length - 250);
@@ -4489,6 +4503,38 @@ export default function PuzzleBoard({
             }
           });
 
+        if (realtimeHealthTimer != null) {
+          clearInterval(realtimeHealthTimer);
+          realtimeHealthTimer = null;
+        }
+        realtimeHealthTimer = window.setInterval(() => {
+          if (!isMounted) return;
+          const ch = channelRef.current;
+          if (!ch) return;
+          try {
+            if (!supabase.realtime.isConnected()) {
+              void supabase.realtime.connect();
+              return;
+            }
+            if (ch.state === REALTIME_CHANNEL_STATES.joined) {
+              if (!realtimeBroadcastReady) {
+                realtimeBroadcastReady = true;
+                while (realtimeBroadcastQueue.length > 0) {
+                  const item = realtimeBroadcastQueue.shift()!;
+                  void ch.send({ type: "broadcast", event: item.event, payload: item.payload });
+                }
+                const meHeal = getLocalUsername();
+                void ch.track({
+                  user: meHeal,
+                  lockedPieceIds: Array.from(localPresenceLockIds),
+                });
+              }
+            }
+          } catch {
+            /* noop */
+          }
+        }, 4000);
+
       } catch (error) {
         console.error('Pixi initialization error:', error);
         setIsLoading(false);
@@ -4518,6 +4564,10 @@ export default function PuzzleBoard({
 
     return () => {
       isMounted = false;
+      if (realtimeHealthTimer != null) {
+        clearInterval(realtimeHealthTimer);
+        realtimeHealthTimer = null;
+      }
       if (deferredBevelRafId != null) {
         cancelAnimationFrame(deferredBevelRafId);
         deferredBevelRafId = null;
