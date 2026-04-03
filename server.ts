@@ -59,6 +59,11 @@ async function startServer() {
   const io = new Server(httpServer, {
     cors: { origin: "*" }
   });
+  const ROOMS_SUMMARY_CACHE_TTL_MS = 2000;
+  const roomsSummaryCache = new Map<
+    string,
+    { at: number; payload: { activeRooms: any[]; completedRooms: any[] } }
+  >();
   
   const PORT = process.env.PORT || 3000;
 
@@ -550,6 +555,12 @@ async function startServer() {
         // Public endpoint: ignore invalid bearer and continue without "my rooms".
       }
     }
+    const cacheKey = userId != null ? `u:${userId}` : "u:anon";
+    const cached = roomsSummaryCache.get(cacheKey);
+    const now = Date.now();
+    if (cached && now - cached.at < ROOMS_SUMMARY_CACHE_TTL_MS) {
+      return res.json(cached.payload);
+    }
     const { data: activePublic, error: activePublicError } = await supabase
       .from("pixi_rooms")
       .select("*")
@@ -639,10 +650,19 @@ async function startServer() {
       completedMerged.set(Number(r.id), r);
     }
     const completedRooms = [...completedMerged.values()];
-    return res.json({
+    const payload = {
       activeRooms: finalActive,
       completedRooms,
-    });
+    };
+    roomsSummaryCache.set(cacheKey, { at: now, payload });
+    // Keep cache bounded even if many users hit this endpoint.
+    if (roomsSummaryCache.size > 300) {
+      const expireBefore = now - ROOMS_SUMMARY_CACHE_TTL_MS * 3;
+      for (const [k, v] of roomsSummaryCache) {
+        if (v.at < expireBefore) roomsSummaryCache.delete(k);
+      }
+    }
+    return res.json(payload);
   });
 
   // ==========================================
