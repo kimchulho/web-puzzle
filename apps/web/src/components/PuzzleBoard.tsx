@@ -387,16 +387,10 @@ export default function PuzzleBoard({
     }
     const vv = typeof window !== "undefined" ? window.visualViewport : null;
     let raf = 0;
-    const timers: ReturnType<typeof setTimeout>[] = [];
+    let t1: ReturnType<typeof setTimeout> | null = null;
+    let t2: ReturnType<typeof setTimeout> | null = null;
     const updateInset = () => {
-      const offsetTop = vv ? Math.max(0, Math.round(vv.offsetTop || 0)) : 0;
-      // Some mobile browsers keep offsetTop at 0 even with visible URL bar.
-      // Use viewport height delta as fallback and clamp to a sane header range.
-      const viewportDelta = vv
-        ? Math.max(0, Math.round(window.innerHeight - vv.height))
-        : 0;
-      const inferredChromeTop = Math.min(viewportDelta, 72);
-      const next = Math.max(offsetTop, inferredChromeTop);
+      const next = vv ? Math.max(0, Math.round(vv.offsetTop || 0)) : 0;
       setWebViewportTopInset(next);
     };
     const scheduleUpdate = () => {
@@ -404,27 +398,23 @@ export default function PuzzleBoard({
       raf = requestAnimationFrame(updateInset);
     };
     scheduleUpdate();
-    // Address bar show/hide and SPA room transition can settle late on mobile.
-    for (const ms of [80, 180, 320, 520, 820, 1200]) {
-      timers.push(setTimeout(scheduleUpdate, ms));
-    }
+    // Address bar show/hide and orientation changes may settle after a short delay.
+    t1 = setTimeout(scheduleUpdate, 80);
+    t2 = setTimeout(scheduleUpdate, 220);
     vv?.addEventListener("resize", scheduleUpdate);
     vv?.addEventListener("scroll", scheduleUpdate);
     window.addEventListener("resize", scheduleUpdate);
     window.addEventListener("orientationchange", scheduleUpdate);
-    window.addEventListener("pageshow", scheduleUpdate);
-    window.addEventListener("focus", scheduleUpdate);
     return () => {
       if (raf) cancelAnimationFrame(raf);
-      timers.forEach((t) => clearTimeout(t));
+      if (t1) clearTimeout(t1);
+      if (t2) clearTimeout(t2);
       vv?.removeEventListener("resize", scheduleUpdate);
       vv?.removeEventListener("scroll", scheduleUpdate);
       window.removeEventListener("resize", scheduleUpdate);
       window.removeEventListener("orientationchange", scheduleUpdate);
-      window.removeEventListener("pageshow", scheduleUpdate);
-      window.removeEventListener("focus", scheduleUpdate);
     };
-  }, [isTossMode, roomId]);
+  }, [isTossMode]);
 
   /** 리더보드 패널 위치: 토스 세로는 툴바 아래(배경색 팝업과 유사한 Y), 웹은 기존 오프셋 사용 */
   const leaderboardOffset = isTossMode
