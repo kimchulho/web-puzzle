@@ -390,7 +390,13 @@ export default function PuzzleBoard({
     let t1: ReturnType<typeof setTimeout> | null = null;
     let t2: ReturnType<typeof setTimeout> | null = null;
     const updateInset = () => {
-      const next = vv ? Math.max(0, Math.round(vv.offsetTop || 0)) : 0;
+      const offsetTop = vv ? Math.max(0, Math.round(vv.offsetTop || 0)) : 0;
+      // On some mobile browsers address-bar-visible state reports offsetTop=0.
+      // Use viewport height delta as fallback and clamp to sane range.
+      const inferredChromeTop = vv
+        ? Math.min(72, Math.max(0, Math.round(window.innerHeight - vv.height)))
+        : 0;
+      const next = Math.max(offsetTop, inferredChromeTop);
       setWebViewportTopInset(next);
     };
     const scheduleUpdate = () => {
