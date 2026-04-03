@@ -699,9 +699,10 @@ async function startServer() {
   const PIECE_DB_FLUSH_MS = 1200;
   const roomPieceStatePending = new Map<
     number,
-    Map<number, { piece_index: number; x: number; y: number; is_locked: boolean }>
+    Map<number, { piece_index: number; x: number; y: number; is_locked: boolean; snapped_by?: string }>
   >();
   const roomSolvedPieceIds = new Map<number, Set<number>>();
+  const roomSolvedPieceOwner = new Map<number, Map<number, string>>();
   const roomPieceStateFlushTimer = new Map<number, ReturnType<typeof setTimeout>>();
   const roomPieceStateFlushing = new Set<number>();
   const socketOwnedPieceIds = new Map<string, Map<number, Set<number>>>();
@@ -777,11 +778,24 @@ async function startServer() {
     pending.clear();
     try {
       const payload = entries.map((u) => ({
-        room_id: roomId,
-        piece_index: u.piece_index,
-        x: u.x,
-        y: u.y,
-        is_locked: u.is_locked,
+        ...(() => {
+          const row: {
+            room_id: number;
+            piece_index: number;
+            x: number;
+            y: number;
+            is_locked: boolean;
+            snapped_by?: string;
+          } = {
+            room_id: roomId,
+            piece_index: u.piece_index,
+            x: u.x,
+            y: u.y,
+            is_locked: u.is_locked,
+          };
+          if (u.snapped_by) row.snapped_by = u.snapped_by;
+          return row;
+        })(),
       }));
       const { error } = await supabase
         .from("pixi_pieces")
@@ -804,20 +818,30 @@ async function startServer() {
   };
   const enqueueRoomPieceState = (
     roomId: number,
-    updates: { pieceId: number; x: number; y: number; isLocked?: boolean }[]
+    updates: { pieceId: number; x: number; y: number; isLocked?: boolean }[],
+    userId?: string
   ) => {
     if (!roomPieceStatePending.has(roomId)) roomPieceStatePending.set(roomId, new Map());
     const pending = roomPieceStatePending.get(roomId)!;
     if (!roomSolvedPieceIds.has(roomId)) roomSolvedPieceIds.set(roomId, new Set());
     const solved = roomSolvedPieceIds.get(roomId)!;
+    if (!roomSolvedPieceOwner.has(roomId)) roomSolvedPieceOwner.set(roomId, new Map());
+    const solvedOwner = roomSolvedPieceOwner.get(roomId)!;
     for (const u of updates) {
-      if (u.isLocked === true) solved.add(u.pieceId);
+      if (u.isLocked === true) {
+        solved.add(u.pieceId);
+        const owner = String(userId ?? "").trim();
+        if (owner && !solvedOwner.has(u.pieceId)) {
+          solvedOwner.set(u.pieceId, owner);
+        }
+      }
       pending.set(u.pieceId, {
         piece_index: u.pieceId,
         x: u.x,
         y: u.y,
         // 한번 잠긴 조각은 다시 false로 내려가지 않게 단조 증가(monotonic) 처리
         is_locked: solved.has(u.pieceId),
+        snapped_by: solvedOwner.get(u.pieceId),
       });
     }
     scheduleRoomPieceStateFlush(roomId);
@@ -839,6 +863,7 @@ async function startServer() {
       number,
       { pieceId: number; x: number; y: number; isLocked?: boolean }
     >();
+    let pendingMoveUserId = "guest";
     let pendingCursor: { username: string; x: number; y: number } | null = null;
     const flushPendingMoves = () => {
       moveFlushTimer = null;
@@ -846,7 +871,7 @@ async function startServer() {
       const roomId = currentRoomId;
       const updates = [...pendingMoveByPiece.values()];
       pendingMoveByPiece.clear();
-      socket.to(roomId.toString()).emit(ROOM_EVENTS.MoveBatch, { roomId, updates });
+      socket.to(roomId.toString()).emit(ROOM_EVENTS.MoveBatch, { roomId, userId: pendingMoveUserId, updates });
     };
     const scheduleMoveFlush = () => {
       if (moveFlushTimer != null) return;
@@ -1109,6 +1134,8 @@ async function startServer() {
     socket.on(ROOM_EVENTS.MoveBatch, (raw: MoveBatchPayload) => {
       const roomId = Number(raw?.roomId);
       if (!Number.isFinite(roomId) || roomId <= 0 || currentRoomId !== roomId) return;
+      const userId = String(raw?.userId ?? "").trim() || socketUserId.get(socket.id) || "guest";
+      if (userId) socketUserId.set(socket.id, userId);
       const updatesRaw = Array.isArray(raw?.updates) ? raw.updates : [];
       if (updatesRaw.length === 0) return;
       const updates = updatesRaw
@@ -1127,8 +1154,9 @@ async function startServer() {
             Number.isFinite(u.y)
         );
       if (updates.length === 0) return;
+      pendingMoveUserId = userId;
       for (const u of updates) pendingMoveByPiece.set(u.pieceId, u);
-      enqueueRoomPieceState(roomId, updates);
+      enqueueRoomPieceState(roomId, updates, userId);
       scheduleMoveFlush();
     });
 

@@ -45,6 +45,34 @@ const readStoredBool = (key: string, fallback: boolean) => {
 const isBotLikeUser = (name: unknown) =>
   typeof name === 'string' && /(bot|봇)/i.test(name.trim());
 
+const ownerColorFromUsername = (username: string): number => {
+  const seed = Array.from(username.trim() || "guest").reduce((acc, ch) => {
+    return (acc * 31 + ch.charCodeAt(0)) >>> 0;
+  }, 7);
+  const hue = seed % 360;
+  const saturation = 74;
+  const lightness = 56;
+  const c = (1 - Math.abs((2 * lightness) / 100 - 1)) * (saturation / 100);
+  const x = c * (1 - Math.abs(((hue / 60) % 2) - 1));
+  const m = lightness / 100 - c / 2;
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  if (hue < 60) [r, g, b] = [c, x, 0];
+  else if (hue < 120) [r, g, b] = [x, c, 0];
+  else if (hue < 180) [r, g, b] = [0, c, x];
+  else if (hue < 240) [r, g, b] = [0, x, c];
+  else if (hue < 300) [r, g, b] = [x, 0, c];
+  else [r, g, b] = [c, 0, x];
+  const rr = Math.round((r + m) * 255);
+  const gg = Math.round((g + m) * 255);
+  const bb = Math.round((b + m) * 255);
+  return (rr << 16) | (gg << 8) | bb;
+};
+
+const ownerColorCss = (username: string): string =>
+  `#${ownerColorFromUsername(username).toString(16).padStart(6, "0")}`;
+
 /** 방 하트비트(10s) 기준, 1회 유실·지연 여유 포함해 “응답 없음” 판정 */
 const PEER_ACTIVITY_STALE_MS = 22_000;
 const ROOM_HEARTBEAT_INTERVAL_MS = 10_000;
@@ -171,6 +199,7 @@ export default function PuzzleBoard({
   const [scores, setScores] = useState<{username: string, score: number}[]>([]);
   const [activeUsers, setActiveUsers] = useState<Set<string>>(new Set());
   const [showLeaderboard, setShowLeaderboard] = useState(false);
+  const [showPieceOwnerOverlay, setShowPieceOwnerOverlay] = useState(false);
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [showBotMenu, setShowBotMenu] = useState(false);
   const [showMosaicModal, setShowMosaicModal] = useState(false);
@@ -194,6 +223,8 @@ export default function PuzzleBoard({
   const tossWideToolbarMeasureRef = useRef<HTMLDivElement | null>(null);
   const snapAudioElRef = useRef<HTMLAudioElement | null>(null);
   const snapAudioLastAtRef = useRef(0);
+  const refreshPieceOwnerOverlayRef = useRef<(() => void) | null>(null);
+  const showPieceOwnerOverlayRef = useRef(showPieceOwnerOverlay);
 
   const handleShareLink = () => {
     const url = `${window.location.origin}/?room=${encodeRoomId(roomId)}`;
@@ -249,6 +280,11 @@ export default function PuzzleBoard({
   useEffect(() => {
     activeUsersRef.current = activeUsers;
   }, [activeUsers]);
+
+  useEffect(() => {
+    showPieceOwnerOverlayRef.current = showPieceOwnerOverlay;
+    refreshPieceOwnerOverlayRef.current?.();
+  }, [showPieceOwnerOverlay]);
 
   const peerLastSeenMsRef = useRef<Map<string, number>>(new Map());
   const [peerWatchEpoch, setPeerWatchEpoch] = useState(0);
@@ -526,8 +562,8 @@ export default function PuzzleBoard({
     let realtimeBroadcastReady = false;
     const realtimeBroadcastQueue: { event: string; payload: unknown }[] = [];
     let enqueueRealtimeBroadcast: (event: string, payload: unknown) => void = () => {};
-    let realtimeHealthTimer: ReturnType<typeof setInterval> | null = null;
-    let realtimeHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
+    let realtimeHealthTimer: number | null = null;
+    let realtimeHeartbeatTimer: number | null = null;
 
     // 1. Pixi Application 초기화
     const initPixi = async () => {
@@ -630,6 +666,7 @@ export default function PuzzleBoard({
           }
         >();
         const remoteLockedPieces = new Map<string, Set<number>>();
+        const solvedPieceOwner = new Map<number, string>();
         /** presence에 실어 신규 입장자가 선점 상태를 동기화할 수 있게 함 */
         const localPresenceLockIds = new Set<number>();
 
@@ -710,6 +747,34 @@ export default function PuzzleBoard({
           if (node instanceof PIXI.Sprite) return node;
           if (node instanceof PIXI.Container) return node;
           return null;
+        };
+        const applyPieceOwnerOverlay = (pieceId: number) => {
+          const piece = pieces.current.get(pieceId);
+          if (!piece) return;
+          const overlay = piece.getChildByLabel("ownerOverlay") as PIXI.Graphics | null;
+          if (!overlay) return;
+          const owner = solvedPieceOwner.get(pieceId);
+          if (!showPieceOwnerOverlayRef.current || !owner) {
+            overlay.visible = false;
+            return;
+          }
+          const localUserRaw = user ? user.username : localStorage.getItem("puzzle_guest_name");
+          const me = localUserRaw != null && localUserRaw !== "" ? String(localUserRaw) : "guest";
+          overlay.tint = ownerColorFromUsername(owner);
+          overlay.alpha = owner === me ? 0.26 : 0.2;
+          overlay.visible = true;
+        };
+        const refreshPieceOwnerOverlay = () => {
+          for (const id of pieces.current.keys()) {
+            applyPieceOwnerOverlay(id);
+          }
+        };
+        refreshPieceOwnerOverlayRef.current = refreshPieceOwnerOverlay;
+        const rememberSolvedPieceOwner = (pieceId: number, ownerId: string) => {
+          const owner = String(ownerId ?? "").trim();
+          if (!owner || solvedPieceOwner.has(pieceId)) return;
+          solvedPieceOwner.set(pieceId, owner);
+          applyPieceOwnerOverlay(pieceId);
         };
         /** 퍼즐 뒷면(이스터 에그): 흰색·검정 중간 단색 회색 */
         const EASTER_SOLID_BACK_HEX = 0x9ca3af;
@@ -1779,7 +1844,9 @@ export default function PuzzleBoard({
           if (updates.length === 0) return;
           const socket = socketRef.current;
           if (socket && socket.connected) {
-            socket.emit(ROOM_EVENTS.MoveBatch, { roomId, updates });
+            const currentUsername = user ? user.username : localStorage.getItem('puzzle_guest_name');
+            const me = currentUsername != null && currentUsername !== '' ? String(currentUsername) : 'guest';
+            socket.emit(ROOM_EVENTS.MoveBatch, { roomId, userId: me, updates });
           }
         }, 80);
 
@@ -2060,7 +2127,7 @@ export default function PuzzleBoard({
         };
 
         const PIECE_DB_FLUSH_MS = 1500;
-        const pieceStatePending = new Map<number, { piece_index: number; x: number; y: number; is_locked: boolean }>();
+        const pieceStatePending = new Map<number, { piece_index: number; x: number; y: number; is_locked: boolean; snapped_by?: string }>();
         let pieceStateFlushTimer: ReturnType<typeof setTimeout> | null = null;
         let pieceStateFlushInFlight = false;
         let pieceStateFlushRequested = false;
@@ -2078,13 +2145,24 @@ export default function PuzzleBoard({
           const batch = [...pieceStatePending.values()];
           pieceStatePending.clear();
           try {
-            const payload = batch.map((u) => ({
-              room_id: roomId,
-              piece_index: u.piece_index,
-              x: u.x,
-              y: u.y,
-              is_locked: u.is_locked,
-            }));
+            const payload = batch.map((u) => {
+              const row: {
+                room_id: number;
+                piece_index: number;
+                x: number;
+                y: number;
+                is_locked: boolean;
+                snapped_by?: string;
+              } = {
+                room_id: roomId,
+                piece_index: u.piece_index,
+                x: u.x,
+                y: u.y,
+                is_locked: u.is_locked,
+              };
+              if (u.snapped_by) row.snapped_by = u.snapped_by;
+              return row;
+            });
             const { error } = await supabase
               .from('pixi_pieces')
               .upsert(payload, { onConflict: 'room_id, piece_index' });
@@ -2102,7 +2180,7 @@ export default function PuzzleBoard({
           }
         };
         const savePiecesState = async (
-          updates: {piece_index: number, x: number, y: number, is_locked: boolean}[],
+          updates: {piece_index: number, x: number, y: number, is_locked: boolean, snapped_by?: string}[],
           opts?: { immediate?: boolean }
         ) => {
           if (updates.length === 0) return;
@@ -2517,6 +2595,7 @@ export default function PuzzleBoard({
           }
 
           // Check if any piece is in the absolute correct position to lock it
+          const localOwner = getLocalUsername();
           cluster.forEach(id => {
             const p = pieces.current.get(id)!;
             const c = id % GRID_COLS;
@@ -2533,12 +2612,19 @@ export default function PuzzleBoard({
               isLocked = true;
               lockedPieceIds.add(id);
             }
-            dbUpdates.push({ piece_index: id, x: p.x, y: p.y, is_locked: isLocked });
+            dbUpdates.push({
+              piece_index: id,
+              x: p.x,
+              y: p.y,
+              is_locked: isLocked,
+              snapped_by: isLocked ? localOwner : undefined,
+            });
           });
 
           let localNewLocked = false;
           if (lockedPieceIds.size > 0) {
             lockedPieceIds.forEach((id) => {
+              rememberSolvedPieceOwner(id, localOwner);
               if (!snappedSoundedPieceIds.has(id)) {
                 snappedSoundedPieceIds.add(id);
                 localNewLocked = true;
@@ -3799,6 +3885,15 @@ export default function PuzzleBoard({
             drawEdge(g, 0, pieceHeight, 0, 0, leftTab, tabDepth);
             g.closePath();
           };
+          const createOwnerOverlay = () => {
+            const overlay = new PIXI.Graphics();
+            applyPieceShape(overlay);
+            overlay.fill({ color: 0xffffff, alpha: 1 });
+            overlay.label = "ownerOverlay";
+            overlay.eventMode = "none";
+            overlay.visible = false;
+            return overlay;
+          };
 
           const pieceGraphics = new PIXI.Graphics();
           applyPieceShape(pieceGraphics);
@@ -3864,6 +3959,7 @@ export default function PuzzleBoard({
             renderTarget.label = 'pieceSprite';
             renderTarget.eventMode = 'none';
             pieceContainer.addChild(renderTarget);
+            pieceContainer.addChild(createOwnerOverlay());
 
             lockIconSprite = new PIXI.Sprite(sharedLockTexture!);
             lockIconSprite.anchor.set(0.5);
@@ -3929,6 +4025,7 @@ export default function PuzzleBoard({
             lockIconSprite.label = 'lockIcon';
 
             pieceContainer.addChild(pieceSprite);
+            pieceContainer.addChild(createOwnerOverlay());
             pieceContainer.addChild(lockIconSprite);
 
             if (ENABLE_BEVEL) {
@@ -3975,6 +4072,10 @@ export default function PuzzleBoard({
             pieceContainer.zIndex = 0;
             initialPlacedCount++;
             snappedSoundedPieceIds.add(i);
+            const ownerFromState = state?.snapped_by != null ? String(state.snapped_by).trim() : "";
+            if (ownerFromState) {
+              rememberSolvedPieceOwner(i, ownerFromState);
+            }
           } else {
             pieceContainer.eventMode = 'static';
             pieceContainer.cursor = 'pointer';
@@ -4789,8 +4890,9 @@ export default function PuzzleBoard({
           });
         };
 
-          const handleRemoteMoveBatch = (updatesRaw: unknown) => {
+          const handleRemoteMoveBatch = (updatesRaw: unknown, moveUserIdRaw?: unknown) => {
             const updates = Array.isArray(updatesRaw) ? updatesRaw : [];
+            const moveUserId = String(moveUserIdRaw ?? "").trim();
             let remoteLockedNow = false;
             updates.forEach((u: any) => {
               const pieceContainer = pieces.current.get(u.pieceId);
@@ -4807,6 +4909,9 @@ export default function PuzzleBoard({
                 const targetY = boardStartY + row * pieceHeight;
                 const shouldLock = u.isLocked === true || (Math.abs(u.x - targetX) < 1 && Math.abs(u.y - targetY) < 1);
                 if (shouldLock) {
+                  if (moveUserId) {
+                    rememberSolvedPieceOwner(u.pieceId, moveUserId);
+                  }
                   if (!snappedSoundedPieceIds.has(u.pieceId)) {
                     snappedSoundedPieceIds.add(u.pieceId);
                     remoteLockedNow = true;
@@ -4896,7 +5001,7 @@ export default function PuzzleBoard({
           socketMoveBatchRef.current = (payload) => {
             if (payload.roomId !== roomId) return;
             bumpInbound();
-            handleRemoteMoveBatch(payload.updates);
+            handleRemoteMoveBatch(payload.updates, payload.userId);
           };
           socketCursorMoveRef.current = (payload) => {
             if (payload.roomId !== roomId) return;
@@ -5145,6 +5250,7 @@ export default function PuzzleBoard({
       socketScoreSyncRef.current = null;
       socketMoveBatchRef.current = null;
       socketCursorMoveRef.current = null;
+      refreshPieceOwnerOverlayRef.current = null;
       clearInterval(peerStaleUiTimer);
       peerLastSeenMsRef.current.clear();
       if (realtimeHealthTimer != null) {
@@ -5879,9 +5985,23 @@ export default function PuzzleBoard({
               <Trophy size={16} className={isTossMode ? "text-[#2F6FE4]" : "text-amber-400"} />
               <h3 className={`font-bold text-sm ${isTossMode ? "text-[#2F6FE4]" : "text-white"}`}>{isKo ? "순위표" : "Leaderboard"}</h3>
             </div>
-            <button onClick={() => setShowLeaderboard(false)} className={`transition-colors ${isTossMode ? "text-[#2F6FE4] hover:text-[#1f5ec6]" : "text-slate-400 hover:text-white"}`}>
-              <X size={16} />
-            </button>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setShowPieceOwnerOverlay((v) => !v)}
+                className={`h-7 px-2 rounded-md border text-[11px] font-semibold transition-colors flex items-center gap-1 ${
+                  showPieceOwnerOverlay
+                    ? (isTossMode ? "bg-[#EAF2FF] border-[#BBD5FF] text-[#2F6FE4]" : "bg-indigo-500/20 border-indigo-400/60 text-indigo-200")
+                    : (isTossMode ? "bg-white border-[#D9E8FF] text-[#6B7684] hover:text-[#2F6FE4]" : "bg-slate-800 border-slate-600 text-slate-300 hover:text-white")
+                }`}
+                title={isKo ? "맞춘 조각 소유자 색상 표시" : "Show solved piece owners"}
+              >
+                <Palette size={12} />
+                <span>{isKo ? "조각" : "Pieces"}</span>
+              </button>
+              <button onClick={() => setShowLeaderboard(false)} className={`transition-colors ${isTossMode ? "text-[#2F6FE4] hover:text-[#1f5ec6]" : "text-slate-400 hover:text-white"}`}>
+                <X size={16} />
+              </button>
+            </div>
           </div>
           <div className="max-h-56 overflow-y-auto p-1.5">
             {scores.length === 0 ? (
@@ -5910,6 +6030,14 @@ export default function PuzzleBoard({
                         {idx + 1}
                       </span>
                       <div className="flex items-center gap-1.5">
+                        <span
+                          className="w-2.5 h-2.5 rounded-sm border border-white/60"
+                          style={{
+                            backgroundColor: ownerColorCss(score.username),
+                            opacity: showPieceOwnerOverlay ? 0.9 : 0.45,
+                          }}
+                          title={isKo ? "조각 소유 색상" : "Piece owner color"}
+                        />
                         <div
                           className={`w-2 h-2 rounded-full ${isLeaderboardPeerLive(score.username) ? 'bg-emerald-500' : (isTossMode ? 'bg-[#B0B8C1]' : 'bg-slate-600')}`}
                           title={
