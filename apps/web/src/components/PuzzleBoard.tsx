@@ -4227,13 +4227,58 @@ export default function PuzzleBoard({
           remoteLockedPieces.delete(username);
         };
 
-        // 3. Supabase Realtime 수신
-        const channel = supabase.channel(`room_${roomId}`);
-        channelRef.current = channel;
-        let prevPresenceUsers = new Set<string>();
-        let presenceInitialSyncDone = false;
+        // 3. Supabase Realtime 수신 (채널 재구독 시 이전 인스턴스에 묶이지 않도록 channelRef만 사용)
+        let lastChannelRecycleAt = 0;
+        let recyclingRealtime = false;
+        let lastRealtimeInboundAt = Date.now();
+        const rtWarn = (msg: string, detail?: unknown) => {
+          console.warn(`[PuzzleRealtime room=${roomId}]`, msg, detail ?? "");
+        };
+        const bumpInbound = () => {
+          lastRealtimeInboundAt = Date.now();
+        };
 
-        enqueueRealtimeBroadcast = (event: string, payload: unknown) => {
+        async function recycleRealtimeChannel(reason: string) {
+          if (recyclingRealtime) return;
+          if (Date.now() - lastChannelRecycleAt < 8000) return;
+          recyclingRealtime = true;
+          lastChannelRecycleAt = Date.now();
+          rtWarn("recycling channel", reason);
+          realtimeBroadcastReady = false;
+          try {
+            if (realtimeHealthTimer != null) {
+              clearInterval(realtimeHealthTimer);
+              realtimeHealthTimer = null;
+            }
+            const old = channelRef.current;
+            channelRef.current = null;
+            if (old) {
+              try {
+                old.untrack();
+              } catch {
+                /* noop */
+              }
+              await supabase.removeChannel(old);
+            }
+          } catch (e) {
+            rtWarn("removeChannel error", e);
+          } finally {
+            recyclingRealtime = false;
+          }
+          attachRoomRealtimeChannel();
+        }
+
+        function attachRoomRealtimeChannel() {
+          if (realtimeHealthTimer != null) {
+            clearInterval(realtimeHealthTimer);
+            realtimeHealthTimer = null;
+          }
+          const channel = supabase.channel(`room_${roomId}`);
+          channelRef.current = channel;
+          let prevPresenceUsers = new Set<string>();
+          let presenceInitialSyncDone = false;
+
+          enqueueRealtimeBroadcast = (event: string, payload: unknown) => {
           const ch = channelRef.current;
           if (!ch) return;
           if (realtimeBroadcastReady) {
@@ -4256,10 +4301,12 @@ export default function PuzzleBoard({
               realtimeBroadcastQueue.splice(0, realtimeBroadcastQueue.length - 250);
             }
           }
-        };
+          };
 
-        const applyPresenceSync = () => {
-          const state = channel.presenceState();
+          const applyPresenceSync = () => {
+          const chP = channelRef.current;
+          if (!chP) return;
+          const state = chP.presenceState();
           const stillInPresence = (uname: string): boolean => {
             for (const key in state) {
               const arr = state[key];
@@ -4354,8 +4401,9 @@ export default function PuzzleBoard({
           });
         };
 
-        channel
+          channel
           .on('broadcast', { event: 'moveBatch' }, ({ payload }) => {
+            bumpInbound();
             payload.updates.forEach((u: any) => {
               const pieceContainer = pieces.current.get(u.pieceId);
               if (pieceContainer) {
@@ -4385,6 +4433,7 @@ export default function PuzzleBoard({
             });
           })
           .on('broadcast', { event: 'lock' }, ({ payload }) => {
+            bumpInbound();
             const userId = payload.userId;
             if (userId) {
               const uid = String(userId);
@@ -4398,6 +4447,7 @@ export default function PuzzleBoard({
             refreshRemoteLockVisuals();
           })
           .on('broadcast', { event: 'unlock' }, ({ payload }) => {
+            bumpInbound();
             const userId = payload.userId;
             if (userId) {
               const uid = String(userId);
@@ -4409,6 +4459,7 @@ export default function PuzzleBoard({
             refreshRemoteLockVisuals();
           })
           .on('broadcast', { event: 'scoreUpdate' }, ({ payload }) => {
+            bumpInbound();
             setScores(prev => {
               const existing = prev.find(s => s.username === payload.username);
               if (existing) {
@@ -4419,6 +4470,7 @@ export default function PuzzleBoard({
             });
           })
           .on('broadcast', { event: 'cursorMove' }, ({ payload }) => {
+            bumpInbound();
             const { username, x, y } = payload;
             const currentUsername = user ? user.username : localStorage.getItem('puzzle_guest_name');
             if (username === currentUsername) return;
@@ -4457,6 +4509,7 @@ export default function PuzzleBoard({
             }
           })
           .on("broadcast", { event: "playerLeft" }, ({ payload }) => {
+            bumpInbound();
             const un =
               payload && typeof (payload as { username?: unknown }).username !== "undefined"
                 ? String((payload as { username: unknown }).username).trim()
@@ -4469,8 +4522,9 @@ export default function PuzzleBoard({
           .on("presence", { event: "sync" }, applyPresenceSync)
           .on("presence", { event: "join" }, applyPresenceSync)
           .on("presence", { event: "leave" }, applyPresenceSync)
-          .subscribe(async (status) => {
+          .subscribe(async (status, err) => {
             if (status === 'SUBSCRIBED') {
+              rtWarn("SUBSCRIBED");
               prevPresenceUsers = new Set();
               presenceInitialSyncDone = false;
               realtimeBroadcastReady = true;
@@ -4490,50 +4544,70 @@ export default function PuzzleBoard({
               if (isDragging && dragCluster.size > 0) {
                 dragCluster.forEach((id) => localPresenceLockIds.add(id));
               }
-              await channel.track({
-                user: me,
-                lockedPieceIds: Array.from(localPresenceLockIds),
-              });
+              const tr = channelRef.current;
+              if (tr) {
+                await tr.track({
+                  user: me,
+                  lockedPieceIds: Array.from(localPresenceLockIds),
+                });
+              }
             } else if (
               status === 'CLOSED' ||
               status === 'CHANNEL_ERROR' ||
               status === 'TIMED_OUT'
             ) {
+              rtWarn(`subscribe ${status}`, err);
               realtimeBroadcastReady = false;
             }
           });
 
-        if (realtimeHealthTimer != null) {
-          clearInterval(realtimeHealthTimer);
-          realtimeHealthTimer = null;
-        }
-        realtimeHealthTimer = window.setInterval(() => {
-          if (!isMounted) return;
-          const ch = channelRef.current;
-          if (!ch) return;
-          try {
-            if (!supabase.realtime.isConnected()) {
-              void supabase.realtime.connect();
-              return;
-            }
-            if (ch.state === REALTIME_CHANNEL_STATES.joined) {
-              if (!realtimeBroadcastReady) {
-                realtimeBroadcastReady = true;
-                while (realtimeBroadcastQueue.length > 0) {
-                  const item = realtimeBroadcastQueue.shift()!;
-                  void ch.send({ type: "broadcast", event: item.event, payload: item.payload });
-                }
-                const meHeal = getLocalUsername();
-                void ch.track({
-                  user: meHeal,
-                  lockedPieceIds: Array.from(localPresenceLockIds),
-                });
+          realtimeHealthTimer = window.setInterval(() => {
+            if (!isMounted || recyclingRealtime) return;
+            const ch = channelRef.current;
+            if (!ch) return;
+            try {
+              if (!supabase.realtime.isConnected()) {
+                rtWarn("socket disconnected → connect()");
+                void supabase.realtime.connect();
+                return;
               }
+              const st = ch.state;
+              if (st === REALTIME_CHANNEL_STATES.errored || st === REALTIME_CHANNEL_STATES.closed) {
+                rtWarn("channel dead → recycle", st);
+                void recycleRealtimeChannel(`health_${st}`);
+                return;
+              }
+              if (st === REALTIME_CHANNEL_STATES.joined) {
+                if (!realtimeBroadcastReady) {
+                  rtWarn("joined but broadcast gate off → heal");
+                  realtimeBroadcastReady = true;
+                  while (realtimeBroadcastQueue.length > 0) {
+                    const item = realtimeBroadcastQueue.shift()!;
+                    void ch.send({ type: "broadcast", event: item.event, payload: item.payload });
+                  }
+                  const meHeal = getLocalUsername();
+                  void ch.track({
+                    user: meHeal,
+                    lockedPieceIds: Array.from(localPresenceLockIds),
+                  });
+                }
+                if (
+                  activeUsersRef.current.size >= 2 &&
+                  Date.now() - lastRealtimeInboundAt > 60000
+                ) {
+                  rtWarn("no inbound broadcast 60s (multiplayer) → recycle", {
+                    msSinceInbound: Date.now() - lastRealtimeInboundAt,
+                  });
+                  void recycleRealtimeChannel("stale_inbound");
+                }
+              }
+            } catch (e) {
+              rtWarn("health tick error", e);
             }
-          } catch {
-            /* noop */
-          }
-        }, 4000);
+          }, 4000);
+        }
+
+        attachRoomRealtimeChannel();
 
       } catch (error) {
         console.error('Pixi initialization error:', error);
