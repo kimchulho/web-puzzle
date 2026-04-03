@@ -468,6 +468,64 @@ async function startServer() {
     return res.json({ user });
   });
 
+  /** 이어하기용 방문 목록 (RLS 우회: service role + JWT sub = pixi_users.id). */
+  app.get("/api/user/room-visits", authRequired, async (req: AuthedRequest, res) => {
+    if (!authSupabase) {
+      return res.status(503).json({
+        message: "Auth server misconfigured. Set SUPABASE_SERVICE_ROLE_KEY in .env.",
+      });
+    }
+    const userId = Number(req.user?.sub);
+    if (!Number.isFinite(userId) || userId <= 0) {
+      return res.status(401).json({ message: "Invalid token subject." });
+    }
+
+    const { data, error } = await authSupabase
+      .from("pixi_user_room_visits")
+      .select("room_id, last_visited_at")
+      .eq("user_id", userId)
+      .order("last_visited_at", { ascending: false })
+      .limit(40);
+
+    if (error) {
+      console.warn("[api/user/room-visits]", error.message);
+      return res.status(500).json({ message: error.message });
+    }
+    return res.json({ visits: data ?? [] });
+  });
+
+  /** Logged-in room visit for 이어하기 (RLS 우회: service role + JWT의 sub만 신뢰). */
+  app.post("/api/user/room-visit", authRequired, async (req: AuthedRequest, res) => {
+    if (!authSupabase) {
+      return res.status(503).json({
+        message: "Auth server misconfigured. Set SUPABASE_SERVICE_ROLE_KEY in .env.",
+      });
+    }
+    const userId = Number(req.user?.sub);
+    if (!Number.isFinite(userId) || userId <= 0) {
+      return res.status(401).json({ message: "Invalid token subject." });
+    }
+    const roomId = Number((req.body ?? {}).roomId);
+    if (!Number.isFinite(roomId) || roomId <= 0) {
+      return res.status(400).json({ message: "roomId must be a positive number." });
+    }
+
+    const { error } = await authSupabase.from("pixi_user_room_visits").upsert(
+      {
+        user_id: userId,
+        room_id: roomId,
+        last_visited_at: new Date().toISOString(),
+      },
+      { onConflict: "user_id,room_id" }
+    );
+
+    if (error) {
+      console.warn("[api/user/room-visit]", error.message);
+      return res.status(500).json({ message: error.message });
+    }
+    return res.status(204).end();
+  });
+
   // ==========================================
   // Socket.io & Playtime Logic
   // ==========================================

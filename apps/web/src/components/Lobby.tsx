@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabaseClient';
 import { motion } from 'motion/react';
 import { encodeRoomId, parseRoomNumberOrCode } from '../lib/roomCode';
 import { recordUserRoomVisit } from '../lib/recordUserRoomVisit';
+import { apiUrl } from '../lib/apiBase';
 import { ImageSelectorModal } from './ImageSelectorModal';
 import {
   TossLobbyBottomBanner,
@@ -213,6 +214,9 @@ const Lobby = ({
   const [serverVisitAtMs, setServerVisitAtMs] = useState<Map<number, number>>(() => new Map());
   const [completedRooms, setCompletedRooms] = useState<any[]>([]);
   const [isRoomsLoading, setIsRoomsLoading] = useState(true);
+  /** 배경 갱신(Realtime·수동 새로고침): 목록이 이미 있으면 전면 스피너 대신 헤더 쪽만 표시 */
+  const [isRoomsRefreshing, setIsRoomsRefreshing] = useState(false);
+  const roomsRefreshDepthRef = useRef(0);
   const [pieceCount, setPieceCount] = useState(100);
   const [imageUrl, setImageUrl] = useState('https://ewbjogsolylcbfmpmyfa.supabase.co/storage/v1/object/public/checki/2.jpg');
   const [imageSource, setImageSource] = useState<'public' | 'custom'>('public');
@@ -357,26 +361,51 @@ const Lobby = ({
     }
   };
 
-  const fetchRooms = async () => {
-    setIsRoomsLoading(true);
+  const bumpRoomsRefreshing = (delta: number) => {
+    roomsRefreshDepthRef.current = Math.max(0, roomsRefreshDepthRef.current + delta);
+    setIsRoomsRefreshing(roomsRefreshDepthRef.current > 0);
+  };
+
+  const fetchRooms = async (opts?: { background?: boolean }) => {
+    const background = !!opts?.background;
+    if (background) {
+      bumpRoomsRefreshing(1);
+    } else {
+      setIsRoomsLoading(true);
+    }
     try {
       if (!user?.id) {
         setContinueRoomIdsServer([]);
         setServerVisitAtMs(new Map());
       } else {
-        const { data: visits, error: visitsErr } = await supabase
-          .from("pixi_user_room_visits")
-          .select("room_id, last_visited_at")
-          .eq("user_id", user.id)
-          .order("last_visited_at", { ascending: false })
-          .limit(40);
-        if (!visitsErr && visits?.length) {
-          const { orderedIds, atMs } = parseServerVisits(visits as { room_id: unknown; last_visited_at: unknown }[]);
-          setContinueRoomIdsServer(orderedIds);
-          setServerVisitAtMs(atMs);
-        } else {
+        const token =
+          typeof localStorage !== "undefined"
+            ? localStorage.getItem("puzzle_access_token")
+            : null;
+        if (!token) {
           setContinueRoomIdsServer([]);
           setServerVisitAtMs(new Map());
+        } else {
+          const visitsRes = await fetch(apiUrl("/api/user/room-visits"), {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (visitsRes.ok) {
+            const body = (await visitsRes.json()) as {
+              visits?: { room_id: unknown; last_visited_at: unknown }[];
+            };
+            const visits = body.visits ?? [];
+            if (visits.length) {
+              const { orderedIds, atMs } = parseServerVisits(visits);
+              setContinueRoomIdsServer(orderedIds);
+              setServerVisitAtMs(atMs);
+            } else {
+              setContinueRoomIdsServer([]);
+              setServerVisitAtMs(new Map());
+            }
+          } else {
+            setContinueRoomIdsServer([]);
+            setServerVisitAtMs(new Map());
+          }
         }
       }
 
@@ -465,17 +494,21 @@ const Lobby = ({
         setCompletedRooms(uniqueCompleted);
       }
     } finally {
-      setIsRoomsLoading(false);
+      if (background) {
+        bumpRoomsRefreshing(-1);
+      } else {
+        setIsRoomsLoading(false);
+      }
     }
   };
 
   useEffect(() => {
-    fetchRooms();
-    
+    void fetchRooms({ background: false });
+
     // Subscribe to changes
     const channel = supabase.channel('public:pixi_rooms')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'pixi_rooms' }, () => {
-        fetchRooms();
+        void fetchRooms({ background: true });
       })
       .subscribe();
       
@@ -544,7 +577,7 @@ const Lobby = ({
     if (data && data.length > 0) {
       const roomId = data[0].id;
       if (!user?.id) pushGuestCreatedRoomId(roomId);
-      if (user?.id) void recordUserRoomVisit(user.id, roomId);
+      if (user?.id) void recordUserRoomVisit(roomId);
       const recentRooms = JSON.parse(localStorage.getItem('puzzle_recent_rooms') || '[]');
       const newRecent = [roomId, ...recentRooms.filter((id: number) => id !== roomId)].slice(0, 10);
       localStorage.setItem('puzzle_recent_rooms', JSON.stringify(newRecent));
@@ -741,7 +774,7 @@ const Lobby = ({
     const newRecent = [room.id, ...recentRooms.filter((id: number) => id !== room.id)].slice(0, 10);
     localStorage.setItem('puzzle_recent_rooms', JSON.stringify(newRecent));
 
-    if (user?.id) void recordUserRoomVisit(user.id, room.id);
+    if (user?.id) void recordUserRoomVisit(room.id);
 
     const enter = () => {
       onJoinRoom(room.id, room.image_url, room.totalPieces || room.piece_count);
@@ -828,6 +861,11 @@ const Lobby = ({
   const tossLight = !!tossUi;
   /** 토스 보상형 광고 게이트 진행 중(다른 입장·코드 입력과 겹치지 않게 버튼 비활성화) */
   const tossRewardGateBusy = !!tossUi && isRewardAdLoading;
+
+  const showActiveRoomsLoading =
+    activeRooms.length === 0 && (isRoomsLoading || isRoomsRefreshing);
+  const showCompletedRoomsLoading =
+    completedRooms.length === 0 && (isRoomsLoading || isRoomsRefreshing);
 
   const tossJoinCtaLabel = (roomId: number) => {
     if (tossRewardGateBusy) return isKo ? "대기 중…" : "Wait…";
@@ -1436,15 +1474,17 @@ const Lobby = ({
               </h2>
               <button
                 type="button"
-                onClick={fetchRooms}
-                className={`shrink-0 transition-colors p-2 rounded-lg ${
+                onClick={() => void fetchRooms({ background: true })}
+                disabled={isRoomsRefreshing}
+                className={`shrink-0 transition-colors p-2 rounded-lg disabled:opacity-60 ${
                   tossSkin
                     ? "text-slate-500 hover:text-[#2F6FE4] hover:bg-[#EAF2FF]"
                     : "text-slate-400 hover:text-white hover:bg-slate-800"
                 }`}
                 title={isKo ? "목록 새로고침" : "Refresh room list"}
+                aria-busy={isRoomsRefreshing}
               >
-                <RefreshCw size={18} />
+                <RefreshCw size={18} className={isRoomsRefreshing ? "animate-spin" : undefined} />
               </button>
             </div>
             {tossUi ? (
@@ -1457,7 +1497,7 @@ const Lobby = ({
           </div>
 
           <div className="flex-1 overflow-y-auto pr-2 space-y-3 custom-scrollbar">
-            {isRoomsLoading ? (
+            {showActiveRoomsLoading ? (
               <div
                 className={`h-full flex flex-col items-center justify-center ${
                   tossSkin ? tossSkin.empty : "text-slate-500"
@@ -1661,7 +1701,7 @@ const Lobby = ({
           </div>
 
           <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
-            {isRoomsLoading ? (
+            {showCompletedRoomsLoading ? (
               <div
                 className={`h-full flex flex-col items-center justify-center ${
                   tossSkin ? tossSkin.empty : "text-slate-500"

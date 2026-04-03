@@ -449,7 +449,7 @@ export default function PuzzleBoard({
         // Update last active time when entering a room
         if (user && user.id) {
           supabase.from('pixi_users').update({ last_active_at: new Date().toISOString() }).eq('id', user.id).then();
-          void recordUserRoomVisit(user.id, roomId);
+          void recordUserRoomVisit(roomId);
         }
         
         const app = new PIXI.Application();
@@ -1753,7 +1753,16 @@ export default function PuzzleBoard({
         /** remoteLockedPieces 기준으로 조각 흐림·입력 가능 여부 일괄 반영 (로컬 드래그/선택은 유지) */
         const refreshRemoteLockVisuals = () => {
           const me = getLocalUsername();
+          const fallingActive = new Set<number>();
+          if (useFallingPieceIntro) {
+            for (const fp of fallingPieces) {
+              if (fp.progress < 1) fallingActive.add(fp.id);
+            }
+          }
           for (let id = 0; id < PIECE_COUNT; id++) {
+            if (fallingActive.has(id)) {
+              continue;
+            }
             const pieceContainer = pieces.current.get(id);
             if (!pieceContainer) continue;
             const col = id % GRID_COLS;
@@ -3776,7 +3785,12 @@ export default function PuzzleBoard({
               fp.container.scale.set(currentScale);
               fp.container.x = fp.targetX - (pieceWidth * (currentScale - 1)) / 2;
               fp.container.y = (fp.targetY - 800) + 800 * ease - (pieceHeight * (currentScale - 1)) / 2;
-              fp.container.alpha = Math.min(1, ease * 1.5);
+              /** 스케일이 큰 구간에서 알파를 올리면 첫 가시 프레임에 거대 조각으로 보임(presence/락 갱신과 겹치면 더 튐) */
+              const alphaStartScale = 1.72;
+              fp.container.alpha =
+                currentScale > alphaStartScale
+                  ? 0
+                  : Math.min(1, (alphaStartScale - currentScale) / (alphaStartScale - 1));
             }
             
             if (allDone) {
@@ -4129,6 +4143,10 @@ export default function PuzzleBoard({
           const step = () => {
             deferredBevelRafId = null;
             if (!isMounted) return;
+            if (useFallingPieceIntro && fallingPieces.some((fp) => fp.progress < 1)) {
+              deferredBevelRafId = requestAnimationFrame(step);
+              return;
+            }
             let budget = BEVEL_UPGRADE_PIECES_PER_FRAME;
             while (budget > 0 && nextId < PIECE_COUNT) {
               upgradeOnePieceDeferredBevel(nextId);
