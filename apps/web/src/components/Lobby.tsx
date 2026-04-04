@@ -28,6 +28,43 @@ const ENABLE_WEB_REWARDED_GATE = false;
 
 const LS_GUEST_CREATED_ROOMS = "puzzle_created_room_ids";
 
+const calculateResolvedPieceCount = (requested: number, imageWidth: number, imageHeight: number) => {
+  let target = Math.min(1000, Math.max(1, Math.floor(requested)));
+  const aspectRatio = Math.max(0.1, imageWidth / Math.max(1, imageHeight));
+  let rows = Math.max(1, Math.round(Math.sqrt(target / aspectRatio)));
+  let cols = Math.max(1, Math.round(aspectRatio * rows));
+
+  while (rows * cols > 1000) {
+    target -= 10;
+    if (target <= 10) {
+      rows = Math.max(1, Math.floor(Math.sqrt(10 / aspectRatio)));
+      cols = Math.max(1, Math.floor(aspectRatio * rows));
+      break;
+    }
+    rows = Math.max(1, Math.round(Math.sqrt(target / aspectRatio)));
+    cols = Math.max(1, Math.round(aspectRatio * rows));
+  }
+  return rows * cols;
+};
+
+const resolvePieceCountFromImage = async (imageUrl: string, requested: number): Promise<number> => {
+  if (typeof window === "undefined" || !imageUrl) return requested;
+  return await new Promise<number>((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const w = img.naturalWidth || 0;
+      const h = img.naturalHeight || 0;
+      if (w > 0 && h > 0) {
+        resolve(calculateResolvedPieceCount(requested, w, h));
+        return;
+      }
+      resolve(requested);
+    };
+    img.onerror = () => resolve(requested);
+    img.src = imageUrl;
+  });
+};
+
 function readGuestCreatedRoomIds(): number[] {
   try {
     const raw = localStorage.getItem(LS_GUEST_CREATED_ROOMS);
@@ -467,10 +504,11 @@ const Lobby = ({
         await supabase.from('puzzle_images').insert([insertData]);
     }
 
+    const resolvedPieceCount = await resolvePieceCountFromImage(currentImageUrl, pieceCount);
     const insertRow: Record<string, unknown> = {
       creator_name: creatorName,
       image_url: currentImageUrl,
-      piece_count: pieceCount,
+      piece_count: resolvedPieceCount,
       max_players: maxPlayers,
       status: 'active',
       has_password: !!password.trim(),
@@ -487,7 +525,7 @@ const Lobby = ({
       const recentRooms = JSON.parse(localStorage.getItem('puzzle_recent_rooms') || '[]');
       const newRecent = [roomId, ...recentRooms.filter((id: number) => id !== roomId)].slice(0, 10);
       localStorage.setItem('puzzle_recent_rooms', JSON.stringify(newRecent));
-      const doEnter = () => onJoinRoom(roomId, data[0].image_url, data[0].piece_count);
+      const doEnter = () => onJoinRoom(roomId, data[0].image_url, resolvedPieceCount);
       if (tossUi) {
         const ok = await runTossRewardedRoomEntry(roomId, doEnter);
         if (!ok) {

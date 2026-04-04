@@ -223,6 +223,11 @@ export default function PuzzleBoard({
   const [showBotMenu, setShowBotMenu] = useState(false);
   const [showMosaicModal, setShowMosaicModal] = useState(false);
   const [mosaicError, setMosaicError] = useState<string | null>(null);
+  const [isGameSocketConnected, setIsGameSocketConnected] = useState(true);
+  const [socketDisconnectedAt, setSocketDisconnectedAt] = useState<number | null>(null);
+  const [showConnectionStatusPopup, setShowConnectionStatusPopup] = useState(false);
+  const hasResolvedActualPieceCountRef = useRef(false);
+  const connectionStatusWrapRef = useRef<HTMLDivElement | null>(null);
   const [showFullImage, setShowFullImage] = useState(false);
   const [showRotateConfirm, setShowRotateConfirm] = useState(false);
   const [showMiniPad, setShowMiniPad] = useState(() => readStoredBool(MINI_PAD_VISIBLE_STORAGE_KEY, true));
@@ -260,6 +265,15 @@ export default function PuzzleBoard({
       setIsCopied(true);
       setTimeout(() => setIsCopied(false), 2000);
     });
+  };
+  const handleReconnectSocket = () => {
+    const socket = socketRef.current;
+    if (!socket) return;
+    try {
+      socket.connect();
+    } catch {
+      // Ignore transient reconnect errors and keep overlay visible.
+    }
   };
   const roomJoinUrl = `${window.location.origin}/?room=${encodeRoomId(roomId)}`;
   const roomQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(roomJoinUrl)}`;
@@ -528,7 +542,10 @@ export default function PuzzleBoard({
         setPlayTime(roomData.total_play_time_seconds || 0);
         accumulatedTimeRef.current = roomData.total_play_time_seconds || 0;
         if (roomData.max_players) setMaxPlayers(roomData.max_players);
-        if (roomData.piece_count) setTotalPieces(roomData.piece_count);
+        // Avoid overriding a locally resolved actual piece count (can differ from requested value).
+        if (roomData.piece_count && !hasResolvedActualPieceCountRef.current) {
+          setTotalPieces(roomData.piece_count);
+        }
       }
 
       const { data: scoreData } = await supabase.from('scores').select('*').eq('room_id', roomId).order('score', { ascending: false });
@@ -544,6 +561,24 @@ export default function PuzzleBoard({
     const backendUrl = import.meta.env.VITE_BACKEND_URL;
     const socket = backendUrl ? io(backendUrl) : io();
     socketRef.current = socket;
+    setIsGameSocketConnected(socket.connected);
+    if (!socket.connected) {
+      setSocketDisconnectedAt((prev) => prev ?? Date.now());
+    }
+
+    socket.on("connect", () => {
+      setIsGameSocketConnected(true);
+      setSocketDisconnectedAt(null);
+      setShowConnectionStatusPopup(false);
+    });
+    socket.on("disconnect", () => {
+      setIsGameSocketConnected(false);
+      setSocketDisconnectedAt((prev) => prev ?? Date.now());
+    });
+    socket.on("connect_error", () => {
+      setIsGameSocketConnected(false);
+      setSocketDisconnectedAt((prev) => prev ?? Date.now());
+    });
 
     socket.emit(ROOM_EVENTS.JoinRoom, {
       roomId,
@@ -578,6 +613,8 @@ export default function PuzzleBoard({
     return () => {
       socket.disconnect();
       socketRef.current = null;
+      setIsGameSocketConnected(false);
+      setShowConnectionStatusPopup(false);
     };
   }, [roomId]);
 
@@ -600,6 +637,19 @@ export default function PuzzleBoard({
     if (h > 0) return `${h}:${m}:${s}`;
     return `${m}:${s}`;
   };
+
+  useEffect(() => {
+    if (!showConnectionStatusPopup) return;
+    const onPointerDown = (evt: PointerEvent) => {
+      const wrap = connectionStatusWrapRef.current;
+      if (!wrap) return;
+      const target = evt.target as Node | null;
+      if (target && wrap.contains(target)) return;
+      setShowConnectionStatusPopup(false);
+    };
+    window.addEventListener("pointerdown", onPointerDown);
+    return () => window.removeEventListener("pointerdown", onPointerDown);
+  }, [showConnectionStatusPopup]);
 
   useEffect(() => {
     const readLocalPuzzleUsername = (): string => {
@@ -1747,6 +1797,7 @@ export default function PuzzleBoard({
         }
         
         const PIECE_COUNT = GRID_COLS * GRID_ROWS;
+        hasResolvedActualPieceCountRef.current = true;
         setTotalPieces(PIECE_COUNT);
 
         // 화면 해상도는 유지하고, 퍼즐 소스 이미지만 미리 축소해 조각/베벨 생성 비용을 낮춘다.
@@ -5563,6 +5614,15 @@ export default function PuzzleBoard({
   const loadBarTrack = isTossMode ? "#EAF2FF" : "rgba(148, 163, 184, 0.35)";
   const loadBarFill = isTossMode ? "#3182F6" : "#6366f1";
   const loadPct = Math.min(100, Math.round(loadProgress));
+  const showConnectionBlocker = !isLoading && !imageLoadError && !isGameSocketConnected;
+  const disconnectedForSec =
+    socketDisconnectedAt != null ? Math.max(0, Math.floor((Date.now() - socketDisconnectedAt) / 1000)) : 0;
+  const connectionStatusTitle = isGameSocketConnected
+    ? (isKo ? "서버 연결 정상" : "Server connected")
+    : (isKo ? "서버 연결 끊김" : "Server disconnected");
+  const connectionStatusDetail = isGameSocketConnected
+    ? (isKo ? "실시간 동기화가 정상 동작 중입니다." : "Realtime sync is healthy.")
+    : (isKo ? "재연결 전까지 진행 저장이 중단됩니다." : "Progress saving is paused until reconnect.");
 
   return (
     <div className="w-full h-full relative" style={boardFrameStyle}>
@@ -5642,6 +5702,34 @@ export default function PuzzleBoard({
             >
               {loadPct}%
             </p>
+          </div>
+        </div>
+      )}
+      {showConnectionBlocker && (
+        <div className="absolute inset-0 z-[90] bg-slate-950/70 backdrop-blur-[2px] flex items-center justify-center p-4">
+          <div className="w-full max-w-sm rounded-2xl border border-red-300/40 bg-red-950/85 text-white px-4 py-3 shadow-xl">
+            <div className="text-sm font-semibold">
+              {isKo ? "연결이 끊겨 진행이 저장되지 않습니다" : "Connection lost: progress is not being saved"}
+            </div>
+            <div className="mt-1 text-xs text-red-100/90">
+              {isKo
+                ? `재연결 전까지 퍼즐 조작이 일시 중지됩니다 (${disconnectedForSec}초 경과)`
+                : `Puzzle interactions are paused until reconnect (${disconnectedForSec}s elapsed)`}
+            </div>
+            <div className="mt-3 flex gap-2">
+              <button
+                onClick={handleReconnectSocket}
+                className="rounded-lg bg-white/95 text-red-700 px-3 py-1.5 text-xs font-semibold hover:bg-white"
+              >
+                {isKo ? "재연결 시도" : "Reconnect now"}
+              </button>
+              <button
+                onClick={onBack}
+                className="rounded-lg border border-white/35 px-3 py-1.5 text-xs font-semibold hover:bg-white/10"
+              >
+                {isKo ? "로비로 이동" : "Back to lobby"}
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -5803,6 +5891,80 @@ export default function PuzzleBoard({
                   </div>
                 )}
               </div>
+            </div>
+            <div className="relative" ref={connectionStatusWrapRef}>
+              <button
+                onClick={() => setShowConnectionStatusPopup((v) => !v)}
+                className={`flex items-center gap-1 px-2 h-7 rounded-md border shrink-0 ${
+                  isTossMode
+                    ? (isGameSocketConnected
+                        ? "bg-[#EAF2FF] border-[#CFE2FF] text-[#2F6FE4]"
+                        : "bg-[#FFF1F2] border-[#FECDD3] text-[#BE123C]")
+                    : (isGameSocketConnected
+                        ? "bg-emerald-500/10 border-emerald-500/40 text-emerald-300"
+                        : "bg-rose-500/10 border-rose-500/40 text-rose-300")
+                }`}
+                title={connectionStatusTitle}
+                aria-label={connectionStatusTitle}
+              >
+                <span
+                  className={`inline-block w-1.5 h-1.5 rounded-full ${
+                    isGameSocketConnected
+                      ? (isTossMode ? "bg-[#2F6FE4]" : "bg-emerald-400")
+                      : (isTossMode ? "bg-[#E11D48]" : "bg-rose-400")
+                  }`}
+                />
+                <span className="text-[10px] font-semibold whitespace-nowrap">
+                  {isKo
+                    ? (isGameSocketConnected ? "연결됨" : "연결끊김")
+                    : (isGameSocketConnected ? "Online" : "Offline")}
+                </span>
+              </button>
+              {showConnectionStatusPopup && (
+                <div
+                  className={`absolute top-full mt-2 left-0 rounded-xl p-3 z-50 w-[220px] ${
+                    isTossMode
+                      ? "bg-white border border-[#D9E8FF] shadow-[0_10px_24px_rgba(47,111,228,0.14)] text-[#2F6FE4]"
+                      : "bg-slate-800 border border-slate-700 text-slate-100"
+                  }`}
+                >
+                  <div className="text-[11px] font-semibold">
+                    {connectionStatusTitle}
+                  </div>
+                  <div className={`mt-1 text-[10px] ${isTossMode ? "text-[#5A7EC2]" : "text-slate-300"}`}>
+                    {connectionStatusDetail}
+                  </div>
+                  {!isGameSocketConnected ? (
+                    <div className={`mt-1 text-[10px] ${isTossMode ? "text-[#BE123C]" : "text-rose-300"}`}>
+                      {isKo
+                        ? `끊김 경과: ${disconnectedForSec}초`
+                        : `Disconnected for: ${disconnectedForSec}s`}
+                    </div>
+                  ) : null}
+                  <div className="mt-3 flex gap-2">
+                    <button
+                      onClick={handleReconnectSocket}
+                      className={`px-2.5 py-1 rounded-md text-[10px] font-semibold ${
+                        isTossMode
+                          ? "bg-[#EAF2FF] border border-[#CFE2FF] text-[#2F6FE4]"
+                          : "bg-slate-700 border border-slate-600 text-slate-100 hover:bg-slate-600"
+                      }`}
+                    >
+                      {isKo ? "재연결" : "Reconnect"}
+                    </button>
+                    <button
+                      onClick={() => setShowConnectionStatusPopup(false)}
+                      className={`px-2.5 py-1 rounded-md text-[10px] font-semibold ${
+                        isTossMode
+                          ? "bg-white border border-[#D9E8FF] text-[#2F6FE4]"
+                          : "bg-transparent border border-slate-600 text-slate-300 hover:bg-slate-700/50"
+                      }`}
+                    >
+                      {isKo ? "닫기" : "Close"}
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
           
