@@ -8,7 +8,7 @@ import React, {
 } from 'react';
 import * as PIXI from 'pixi.js';
 import { throttle } from 'lodash';
-import { Clock, Users, Trophy, ChevronLeft, X, Palette, LayoutGrid, Zap, Heart, Image as ImageIcon, Bot, Maximize, Minimize, RotateCcw, Share2, Check, Plus, Minus, QrCode, User } from 'lucide-react';
+import { Clock, Users, Trophy, ChevronLeft, X, Palette, LayoutGrid, Zap, Heart, Image as ImageIcon, Bot, Maximize, Minimize, RotateCcw, Share2, Check, Plus, Minus, QrCode, Crosshair } from 'lucide-react';
 import { io, Socket } from 'socket.io-client';
 import confetti from 'canvas-confetti';
 import {
@@ -1879,13 +1879,16 @@ export default function PuzzleBoard({
           drawC(p(0.610, -0.127), p(0.807, 0), p(1.000, 0));
         };
 
-        const sendMoveBatch = throttle((updates: {pieceId: number, x: number, y: number, isLocked?: boolean, snappedBy?: string}[]) => {
+        const sendMoveBatch = throttle((
+          updates: {pieceId: number, x: number, y: number, isLocked?: boolean, snappedBy?: string}[],
+          opts?: { snapped?: boolean }
+        ) => {
           if (updates.length === 0) return;
           const socket = socketRef.current;
           if (socket && socket.connected) {
             const currentUsername = user ? user.username : localStorage.getItem('puzzle_guest_name');
             const me = currentUsername != null && currentUsername !== '' ? String(currentUsername) : 'guest';
-            socket.emit(ROOM_EVENTS.MoveBatch, { roomId, userId: me, updates });
+            socket.emit(ROOM_EVENTS.MoveBatch, { roomId, userId: me, snapped: opts?.snapped === true, updates });
           }
         }, 80);
 
@@ -2678,6 +2681,9 @@ export default function PuzzleBoard({
           if (localNewLocked) {
             playSnapSound();
           }
+          if (snapped && !localNewLocked) {
+            playSnapSound();
+          }
 
           if (updates.length > 0) {
             updates.forEach((u) => {
@@ -2685,7 +2691,7 @@ export default function PuzzleBoard({
               const owner = solvedPieceOwner.get(u.pieceId);
               if (owner) u.snappedBy = owner;
             });
-            sendMoveBatch(updates);
+            sendMoveBatch(updates, { snapped });
           }
           if (dbUpdates.length > 0) {
             void savePiecesState(dbUpdates);
@@ -4936,9 +4942,10 @@ export default function PuzzleBoard({
           });
         };
 
-          const handleRemoteMoveBatch = (updatesRaw: unknown, moveUserIdRaw?: unknown) => {
+          const handleRemoteMoveBatch = (updatesRaw: unknown, moveUserIdRaw?: unknown, snappedRaw?: unknown) => {
             const updates = Array.isArray(updatesRaw) ? updatesRaw : [];
             const moveUserId = String(moveUserIdRaw ?? "").trim();
+            const remoteSnapped = snappedRaw === true;
             let remoteLockedNow = false;
             updates.forEach((u: any) => {
               const pieceContainer = pieces.current.get(u.pieceId);
@@ -4975,7 +4982,7 @@ export default function PuzzleBoard({
                 }
               }
             });
-            if (remoteLockedNow) {
+            if (remoteLockedNow || remoteSnapped) {
               playSnapSound();
             }
           };
@@ -5050,7 +5057,7 @@ export default function PuzzleBoard({
           socketMoveBatchRef.current = (payload) => {
             if (payload.roomId !== roomId) return;
             bumpInbound();
-            handleRemoteMoveBatch(payload.updates, payload.userId);
+            handleRemoteMoveBatch(payload.updates, payload.userId, payload.snapped);
           };
           socketCursorMoveRef.current = (payload) => {
             if (payload.roomId !== roomId) return;
@@ -5486,6 +5493,7 @@ export default function PuzzleBoard({
     user?.username != null && String(user.username).trim() !== ""
       ? String(user.username).trim()
       : (localStorage.getItem("puzzle_guest_name") || "guest");
+  const isAdminUser = currentPlayerId.trim().toLowerCase() === "admin";
 
   const tossWidePuzzleInsetPx =
     isTossMode && isTossWideMode
@@ -5777,6 +5785,10 @@ export default function PuzzleBoard({
               <span className="text-xs font-semibold whitespace-nowrap text-[#2F6FE4]">
                 {placedPieces} / {totalPieces}
               </span>
+              <span className="sm:hidden inline-flex items-center gap-1 text-[11px] font-semibold whitespace-nowrap text-[#2F6FE4]">
+                <Clock size={11} className="text-[#2F6FE4]" />
+                {formatTime(playTime)}
+              </span>
             </div>
           ) : (
             <div
@@ -5798,6 +5810,10 @@ export default function PuzzleBoard({
               </div>
               <span className={`text-xs font-medium whitespace-nowrap ${isTossMode ? "text-blue-700" : "text-indigo-400"}`}>
                 {placedPieces} / {totalPieces}
+              </span>
+              <span className="sm:hidden inline-flex items-center gap-1 text-[11px] font-medium font-mono whitespace-nowrap text-slate-300">
+                <Clock size={11} className="text-slate-400" />
+                {formatTime(playTime)}
               </span>
             </div>
           )}
@@ -5846,7 +5862,7 @@ export default function PuzzleBoard({
           )}
 
           {isTossMode ? (
-            <div className="flex items-center justify-center gap-2 flex-1 min-w-0 h-8 rounded-lg bg-[#F4F8FF] px-3 text-[#2F6FE4]">
+            <div className="hidden sm:flex items-center justify-center gap-2 flex-1 min-w-0 h-8 rounded-lg bg-[#F4F8FF] px-3 text-[#2F6FE4]">
               <Clock size={12} className="text-[#2F6FE4]" />
               <span className="text-xs font-semibold whitespace-nowrap font-mono">
                 {formatTime(playTime)}
@@ -5854,7 +5870,7 @@ export default function PuzzleBoard({
             </div>
           ) : (
             <div
-              className={`flex items-center gap-1 px-2 h-7 rounded-md border flex-1 sm:flex-none justify-center ${
+              className={`hidden sm:flex items-center gap-1 px-2 h-7 rounded-md border flex-1 sm:flex-none justify-center ${
                 isTossMode ? "bg-blue-50 border-blue-200" : "bg-slate-800/50 border-slate-700/50"
               }`}
               title={isKo ? "플레이 시간" : "Play Time"}
@@ -5866,7 +5882,7 @@ export default function PuzzleBoard({
             </div>
           )}
 
-          {!isTossMode ? (
+          {!isTossMode && isAdminUser ? (
             <div className="relative">
               <button
                 onClick={() => setShowBotMenu(!showBotMenu)}
@@ -6135,7 +6151,7 @@ export default function PuzzleBoard({
               <h3 className={`font-bold text-sm ${isTossMode ? "text-[#2F6FE4]" : "text-white"}`}>{isKo ? "순위" : "Rank"}</h3>
             </div>
             <div className="flex items-center gap-1">
-              <div className="h-7 flex items-center" title={isKo ? "조각 색상 투명도" : "Piece color opacity"}>
+              <div className="h-7 flex items-center mr-1" title={isKo ? "조각 색상 투명도" : "Piece color opacity"}>
                 <input
                   type="range"
                   min={10}
@@ -6148,14 +6164,14 @@ export default function PuzzleBoard({
               </div>
               <button
                 onClick={() => setShowPieceOwnerOverlay((v) => !v)}
-                className={`h-7 w-7 rounded-md border text-[11px] font-semibold transition-colors inline-flex items-center justify-center ${
+                className={`h-7 w-7 rounded-md border text-[11px] font-semibold transition-colors inline-flex items-center justify-center mr-1 ${
                   showPieceOwnerOverlay
                     ? (isTossMode ? "bg-[#EAF2FF] border-[#BBD5FF] text-[#2F6FE4]" : "bg-indigo-500/20 border-indigo-400/60 text-indigo-200")
                     : (isTossMode ? "bg-white border-[#D9E8FF] text-[#6B7684] hover:text-[#2F6FE4]" : "bg-slate-800 border-slate-600 text-slate-300 hover:text-white")
                 }`}
                 title={isKo ? "내 조각/소유자 색상 표시" : "Show my/owner piece colors"}
               >
-                <User size={12} />
+                <Crosshair size={12} />
               </button>
               <button onClick={() => setShowLeaderboard(false)} className={`transition-colors ${isTossMode ? "text-[#2F6FE4] hover:text-[#1f5ec6]" : "text-slate-400 hover:text-white"}`}>
                 <X size={16} />

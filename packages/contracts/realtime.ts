@@ -27,6 +27,7 @@ export interface SyncTimePayload {
 export interface MoveBatchPayload {
   roomId: number;
   userId?: string;
+  snapped?: boolean;
   updates: { pieceId: number; x: number; y: number; isLocked?: boolean; snappedBy?: string }[];
 }
 

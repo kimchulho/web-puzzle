@@ -868,6 +868,7 @@ async function startServer() {
       { pieceId: number; x: number; y: number; isLocked?: boolean; snappedBy?: string }
     >();
     let pendingMoveUserId = "guest";
+    let pendingMoveSnapped = false;
     let pendingCursor: { username: string; x: number; y: number } | null = null;
     const flushPendingMoves = () => {
       moveFlushTimer = null;
@@ -875,7 +876,13 @@ async function startServer() {
       const roomId = currentRoomId;
       const updates = [...pendingMoveByPiece.values()];
       pendingMoveByPiece.clear();
-      socket.to(roomId.toString()).emit(ROOM_EVENTS.MoveBatch, { roomId, userId: pendingMoveUserId, updates });
+      socket.to(roomId.toString()).emit(ROOM_EVENTS.MoveBatch, {
+        roomId,
+        userId: pendingMoveUserId,
+        snapped: pendingMoveSnapped,
+        updates,
+      });
+      pendingMoveSnapped = false;
     };
     const scheduleMoveFlush = () => {
       if (moveFlushTimer != null) return;
@@ -1005,6 +1012,7 @@ async function startServer() {
           ? Math.floor(joinedUserIdRaw)
           : null;
       pendingMoveByPiece.clear();
+      pendingMoveSnapped = false;
       pendingCursor = null;
       if (moveFlushTimer != null) {
         clearTimeout(moveFlushTimer);
@@ -1142,6 +1150,7 @@ async function startServer() {
       if (userId) socketUserId.set(socket.id, userId);
       const updatesRaw = Array.isArray(raw?.updates) ? raw.updates : [];
       if (updatesRaw.length === 0) return;
+      const snapped = raw?.snapped === true;
       const updates = updatesRaw
         .slice(0, 120)
         .map((u) => ({
@@ -1163,6 +1172,7 @@ async function startServer() {
         );
       if (updates.length === 0) return;
       pendingMoveUserId = userId;
+      pendingMoveSnapped = pendingMoveSnapped || snapped;
       for (const u of updates) pendingMoveByPiece.set(u.pieceId, u);
       enqueueRoomPieceState(roomId, updates, userId);
       scheduleMoveFlush();
