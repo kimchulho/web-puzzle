@@ -226,6 +226,10 @@ export default function PuzzleBoard({
   const [showFullImage, setShowFullImage] = useState(false);
   const [showRotateConfirm, setShowRotateConfirm] = useState(false);
   const [showMiniPad, setShowMiniPad] = useState(() => readStoredBool(MINI_PAD_VISIBLE_STORAGE_KEY, true));
+  const [isMobileLandscape, setIsMobileLandscape] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.matchMedia("(max-width: 767px) and (orientation: landscape)").matches;
+  });
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [mosaicUrl, setMosaicUrl] = useState("https://ewbjogsolylcbfmpmyfa.supabase.co/storage/v1/object/public/checki/2.jpg");
   const [mosaicQuick, setMosaicQuick] = useState(false);
@@ -308,6 +312,28 @@ export default function PuzzleBoard({
   useEffect(() => {
     activeUsersRef.current = activeUsers;
   }, [activeUsers]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const mql = window.matchMedia("(max-width: 767px) and (orientation: landscape)");
+    const apply = () => setIsMobileLandscape(mql.matches);
+    apply();
+    const onChange = () => apply();
+    if (typeof mql.addEventListener === "function") {
+      mql.addEventListener("change", onChange);
+    } else {
+      mql.addListener(onChange);
+    }
+    window.addEventListener("resize", apply);
+    return () => {
+      if (typeof mql.removeEventListener === "function") {
+        mql.removeEventListener("change", onChange);
+      } else {
+        mql.removeListener(onChange);
+      }
+      window.removeEventListener("resize", apply);
+    };
+  }, []);
 
   useEffect(() => {
     showPieceOwnerOverlayRef.current = showPieceOwnerOverlay;
@@ -5769,45 +5795,57 @@ export default function PuzzleBoard({
           </div>
           
           {isTossMode ? (
-            <div className={`flex items-center justify-center gap-2 h-8 rounded-lg bg-[#F4F8FF] px-3 ${isTossWideMode ? "w-24 shrink-0" : "flex-1 min-w-0"}`}>
-              <span className="w-full max-w-[90px] h-1.5 rounded-full overflow-hidden bg-[#D9E8FF]">
-                <span
-                  style={{
-                    display: "block",
-                    width: `${(placedPieces / totalPieces) * 100}%`,
-                    height: "100%",
-                    background: "#2F6FE4",
-                    borderRadius: 999,
-                    transition: "width 300ms",
-                  }}
-                />
-              </span>
-              <span className="text-xs font-semibold whitespace-nowrap text-[#2F6FE4]">
-                {placedPieces} / {totalPieces}
-              </span>
-            </div>
-          ) : (
-            <div
-              className={`flex items-center gap-1.5 px-2 h-7 rounded-md border flex-1 sm:flex-none justify-center ${
-                isTossMode ? "bg-blue-50 border-blue-200" : "bg-slate-800/50 border-slate-700/50"
-              }`}
-            >
-              <div
-                className={`w-full max-w-[60px] sm:max-w-none sm:w-24 rounded-full h-1.5 overflow-hidden ${
-                  isTossMode ? "bg-blue-200" : "bg-slate-700"
-                }`}
-              >
-                <div
-                  className={`h-full rounded-full transition-all duration-500 ${
-                    isTossMode ? "bg-blue-500" : "bg-indigo-500"
-                  }`}
-                  style={{ width: `${(placedPieces / totalPieces) * 100}%` }}
-                />
+            <>
+              <div className={`flex items-center justify-center gap-2 h-8 rounded-lg bg-[#F4F8FF] px-3 ${isTossWideMode ? "w-24 shrink-0" : "flex-1 min-w-0"}`}>
+                <span className="w-full max-w-[90px] h-1.5 rounded-full overflow-hidden bg-[#D9E8FF]">
+                  <span
+                    style={{
+                      display: "block",
+                      width: `${(placedPieces / totalPieces) * 100}%`,
+                      height: "100%",
+                      background: "#2F6FE4",
+                      borderRadius: 999,
+                      transition: "width 300ms",
+                    }}
+                  />
+                </span>
+                <span className="text-xs font-semibold whitespace-nowrap text-[#2F6FE4]">
+                  {placedPieces} / {totalPieces}
+                </span>
               </div>
-              <span className={`text-xs font-medium whitespace-nowrap ${isTossMode ? "text-blue-700" : "text-indigo-400"}`}>
-                {placedPieces} / {totalPieces}
-              </span>
-            </div>
+              {isMobileLandscape ? (
+                <div className="flex items-center justify-center gap-1 h-8 rounded-lg bg-[#F4F8FF] px-2 shrink-0 text-[#2F6FE4]">
+                  <Clock size={11} className="text-[#2F6FE4]" />
+                  <span className="text-[11px] font-semibold whitespace-nowrap font-mono">
+                    {formatTime(playTime)}
+                  </span>
+                </div>
+              ) : null}
+            </>
+          ) : (
+            <>
+              <div
+                className="flex items-center gap-1.5 px-2 h-7 rounded-md border flex-1 sm:flex-none justify-center bg-slate-800/50 border-slate-700/50"
+              >
+                <div className="w-full max-w-[60px] sm:max-w-none sm:w-24 rounded-full h-1.5 overflow-hidden bg-slate-700">
+                  <div
+                    className="h-full rounded-full transition-all duration-500 bg-indigo-500"
+                    style={{ width: `${(placedPieces / totalPieces) * 100}%` }}
+                  />
+                </div>
+                <span className="text-xs font-medium whitespace-nowrap text-indigo-400">
+                  {placedPieces} / {totalPieces}
+                </span>
+              </div>
+              {isMobileLandscape ? (
+                <div className="flex items-center justify-center gap-1 px-2 h-7 rounded-md border shrink-0 bg-slate-800/50 border-slate-700/50 text-slate-300">
+                  <Clock size={11} className="text-slate-400" />
+                  <span className="text-[11px] font-medium whitespace-nowrap font-mono">
+                    {formatTime(playTime)}
+                  </span>
+                </div>
+              ) : null}
+            </>
           )}
 
           {/* Leaderboard (비-Toss WebView); Toss 는 네비 액세서리로만 토글 */}
@@ -5861,7 +5899,7 @@ export default function PuzzleBoard({
           )}
 
           {isTossMode ? (
-            <div className="flex items-center justify-center gap-2 flex-1 min-w-0 h-8 rounded-lg bg-[#F4F8FF] px-3 text-[#2F6FE4]">
+            <div className={`${isMobileLandscape ? "hidden" : "flex"} items-center justify-center gap-2 flex-1 min-w-0 h-8 rounded-lg bg-[#F4F8FF] px-3 text-[#2F6FE4]`}>
               <Clock size={12} className="text-[#2F6FE4]" />
               <span className="text-xs font-semibold whitespace-nowrap font-mono">
                 {formatTime(playTime)}
@@ -5869,13 +5907,11 @@ export default function PuzzleBoard({
             </div>
           ) : (
             <div
-              className={`flex items-center gap-1 px-2 h-7 rounded-md border flex-1 sm:flex-none justify-center ${
-                isTossMode ? "bg-blue-50 border-blue-200" : "bg-slate-800/50 border-slate-700/50"
-              }`}
+              className={`${isMobileLandscape ? "hidden" : "flex"} items-center gap-1 px-2 h-7 rounded-md border flex-1 sm:flex-none justify-center bg-slate-800/50 border-slate-700/50`}
               title={isKo ? "플레이 시간" : "Play Time"}
             >
-              <Clock size={12} className={isTossMode ? "text-blue-700" : "text-slate-400"} />
-              <span className={`text-xs font-medium font-mono whitespace-nowrap ${isTossMode ? "text-blue-700" : ""}`}>
+              <Clock size={12} className="text-slate-400" />
+              <span className="text-xs font-medium font-mono whitespace-nowrap">
                 {formatTime(playTime)}
               </span>
             </div>
