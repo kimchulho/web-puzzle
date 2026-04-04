@@ -8,7 +8,7 @@ import React, {
 } from 'react';
 import * as PIXI from 'pixi.js';
 import { throttle } from 'lodash';
-import { Clock, Users, Trophy, ChevronLeft, X, Palette, LayoutGrid, Zap, Heart, Image as ImageIcon, Bot, Maximize, Minimize, RotateCcw, Share2, Check, Plus, Minus, QrCode } from 'lucide-react';
+import { Clock, Users, Trophy, ChevronLeft, X, Palette, LayoutGrid, Zap, Heart, Image as ImageIcon, Bot, Maximize, Minimize, RotateCcw, Share2, Check, Plus, Minus, QrCode, User } from 'lucide-react';
 import { io, Socket } from 'socket.io-client';
 import confetti from 'canvas-confetti';
 import {
@@ -32,11 +32,24 @@ const TOSS_WIDE_PUZZLE_INSET_TRIM_PX = 3;
 const TOSS_WIDE_TOOLBAR_WIDTH_FALLBACK_PX = 44;
 const MINI_PAD_VISIBLE_STORAGE_KEY = 'puzzle_show_mini_pad';
 const TOSS_WIDE_MODE_STORAGE_KEY = 'puzzle_toss_wide_mode';
+const OWNER_OVERLAY_OPACITY_STORAGE_KEY = "puzzle_owner_overlay_opacity_pct";
 const readStoredBool = (key: string, fallback: boolean) => {
   try {
     const raw = localStorage.getItem(key);
     if (raw === '1') return true;
     if (raw === '0') return false;
+  } catch {
+    // Ignore storage access errors.
+  }
+  return fallback;
+};
+const readStoredNumber = (key: string, fallback: number, min: number, max: number) => {
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw == null || raw === "") return fallback;
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed)) return fallback;
+    return Math.max(min, Math.min(max, parsed));
   } catch {
     // Ignore storage access errors.
   }
@@ -200,6 +213,9 @@ export default function PuzzleBoard({
   const [activeUsers, setActiveUsers] = useState<Set<string>>(new Set());
   const [showLeaderboard, setShowLeaderboard] = useState(false);
   const [showPieceOwnerOverlay, setShowPieceOwnerOverlay] = useState(false);
+  const [ownerOverlayOpacityPct, setOwnerOverlayOpacityPct] = useState(() =>
+    readStoredNumber(OWNER_OVERLAY_OPACITY_STORAGE_KEY, 90, 10, 100)
+  );
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [showQrCode, setShowQrCode] = useState(false);
   const [isQrLoading, setIsQrLoading] = useState(false);
@@ -228,6 +244,7 @@ export default function PuzzleBoard({
   const snapAudioLastAtRef = useRef(0);
   const refreshPieceOwnerOverlayRef = useRef<(() => void) | null>(null);
   const showPieceOwnerOverlayRef = useRef(showPieceOwnerOverlay);
+  const ownerOverlayOpacityRef = useRef(ownerOverlayOpacityPct / 100);
 
   const handleShareLink = () => {
     const url = `${window.location.origin}/?room=${encodeRoomId(roomId)}`;
@@ -296,6 +313,16 @@ export default function PuzzleBoard({
     showPieceOwnerOverlayRef.current = showPieceOwnerOverlay;
     refreshPieceOwnerOverlayRef.current?.();
   }, [showPieceOwnerOverlay]);
+
+  useEffect(() => {
+    ownerOverlayOpacityRef.current = Math.max(0.1, Math.min(1, ownerOverlayOpacityPct / 100));
+    refreshPieceOwnerOverlayRef.current?.();
+    try {
+      localStorage.setItem(OWNER_OVERLAY_OPACITY_STORAGE_KEY, String(ownerOverlayOpacityPct));
+    } catch {
+      // Ignore storage access errors.
+    }
+  }, [ownerOverlayOpacityPct]);
 
   const peerLastSeenMsRef = useRef<Map<string, number>>(new Map());
   const [peerWatchEpoch, setPeerWatchEpoch] = useState(0);
@@ -772,7 +799,8 @@ export default function PuzzleBoard({
           const localUserRaw = user ? user.username : localStorage.getItem("puzzle_guest_name");
           const me = localUserRaw != null && localUserRaw !== "" ? String(localUserRaw) : "guest";
           overlay.tint = ownerColorFromUsername(owner);
-          overlay.alpha = owner === me ? 0.6 : 0.6;
+          const chosenAlpha = ownerOverlayOpacityRef.current;
+          overlay.alpha = owner === me ? chosenAlpha : chosenAlpha;
           overlay.visible = true;
         };
         const refreshPieceOwnerOverlay = () => {
@@ -5454,6 +5482,10 @@ export default function PuzzleBoard({
         backgroundColor: "#F4F8FF",
       }
     : { backgroundColor: bgColor };
+  const currentPlayerId =
+    user?.username != null && String(user.username).trim() !== ""
+      ? String(user.username).trim()
+      : (localStorage.getItem("puzzle_guest_name") || "guest");
 
   const tossWidePuzzleInsetPx =
     isTossMode && isTossWideMode
@@ -5791,6 +5823,9 @@ export default function PuzzleBoard({
           {isTossMode ? (
             <div className="flex items-center justify-center gap-2 flex-1 min-w-0 h-8 rounded-lg bg-[#F4F8FF] px-3 text-[#2F6FE4]">
               <Users size={12} className="text-[#2F6FE4]" />
+              <span className="text-[11px] font-semibold max-w-[84px] truncate whitespace-nowrap" title={currentPlayerId}>
+                {currentPlayerId}
+              </span>
               <span className="text-xs font-semibold whitespace-nowrap">{playerCount}/{maxPlayers}</span>
             </div>
           ) : (
@@ -5801,6 +5836,9 @@ export default function PuzzleBoard({
               title={isKo ? "인원" : "Players"}
             >
               <Users size={12} className={isTossMode ? "text-blue-700" : "text-slate-400"} />
+              <span className="text-[11px] font-medium max-w-[96px] truncate whitespace-nowrap text-slate-300" title={currentPlayerId}>
+                {currentPlayerId}
+              </span>
               <span className={`text-xs font-medium whitespace-nowrap ${isTossMode ? "text-blue-700" : ""}`}>
                 {playerCount}/{maxPlayers}
               </span>
@@ -6094,20 +6132,30 @@ export default function PuzzleBoard({
           }`}>
             <div className="flex items-center gap-2">
               <Trophy size={16} className={isTossMode ? "text-[#2F6FE4]" : "text-amber-400"} />
-              <h3 className={`font-bold text-sm ${isTossMode ? "text-[#2F6FE4]" : "text-white"}`}>{isKo ? "순위표" : "Leaderboard"}</h3>
+              <h3 className={`font-bold text-sm ${isTossMode ? "text-[#2F6FE4]" : "text-white"}`}>{isKo ? "순위" : "Rank"}</h3>
             </div>
             <div className="flex items-center gap-1">
+              <div className="h-7 flex items-center" title={isKo ? "조각 색상 투명도" : "Piece color opacity"}>
+                <input
+                  type="range"
+                  min={10}
+                  max={100}
+                  step={5}
+                  value={ownerOverlayOpacityPct}
+                  onChange={(e) => setOwnerOverlayOpacityPct(Number(e.target.value))}
+                  className="w-12 h-1 accent-indigo-500 cursor-pointer"
+                />
+              </div>
               <button
                 onClick={() => setShowPieceOwnerOverlay((v) => !v)}
-                className={`h-7 px-2 rounded-md border text-[11px] font-semibold transition-colors flex items-center gap-1 ${
+                className={`h-7 w-7 rounded-md border text-[11px] font-semibold transition-colors inline-flex items-center justify-center ${
                   showPieceOwnerOverlay
                     ? (isTossMode ? "bg-[#EAF2FF] border-[#BBD5FF] text-[#2F6FE4]" : "bg-indigo-500/20 border-indigo-400/60 text-indigo-200")
                     : (isTossMode ? "bg-white border-[#D9E8FF] text-[#6B7684] hover:text-[#2F6FE4]" : "bg-slate-800 border-slate-600 text-slate-300 hover:text-white")
                 }`}
-                title={isKo ? "맞춘 조각 소유자 색상 표시" : "Show solved piece owners"}
+                title={isKo ? "내 조각/소유자 색상 표시" : "Show my/owner piece colors"}
               >
-                <Palette size={12} />
-                <span>{isKo ? "조각" : "Pieces"}</span>
+                <User size={12} />
               </button>
               <button onClick={() => setShowLeaderboard(false)} className={`transition-colors ${isTossMode ? "text-[#2F6FE4] hover:text-[#1f5ec6]" : "text-slate-400 hover:text-white"}`}>
                 <X size={16} />
