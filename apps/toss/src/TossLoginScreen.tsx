@@ -121,7 +121,7 @@ export default function TossLoginScreen({
         </div>
       ) : null}
       <Text display="block" typography="t3" fontWeight="bold" color="adaptive.grey900">
-        웹퍼즐 (Apps in Toss)
+        퍼즐록스 (Apps in Toss)
       </Text>
       {onCancel ? (
         <Text

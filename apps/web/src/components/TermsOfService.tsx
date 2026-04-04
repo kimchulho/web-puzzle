@@ -36,7 +36,7 @@ export default function TermsOfService({
             돌아가기
           </button>
         )}
-        <h1 className={`text-sm font-semibold truncate ${isTossMode ? "text-[#2F6FE4]" : "text-white"}`}>웹퍼즐 서비스 이용약관</h1>
+        <h1 className={`text-sm font-semibold truncate ${isTossMode ? "text-[#2F6FE4]" : "text-white"}`}>퍼즐록스 서비스 이용약관</h1>
       </header>
 
       <main className={`max-w-3xl mx-auto px-4 pb-16 text-sm leading-relaxed space-y-8 ${isTossMode ? "py-6" : "py-8"}`}>
@@ -45,7 +45,7 @@ export default function TermsOfService({
           <h2 className={`text-lg font-bold mb-3 ${isTossMode ? "text-slate-900" : "text-white"}`}>제1조 (목적)</h2>
           <p>
             본 약관은 <strong>종이천하</strong>(이하 &quot;운영자&quot;)가 제공하는 온라인 직소 퍼즐 서비스
-            <strong className="text-white"> 「웹퍼즐」</strong>(이하 &quot;서비스&quot;)의 이용과 관련하여 운영자와
+            <strong className="text-white"> 「퍼즐록스」</strong>(이하 &quot;서비스&quot;)의 이용과 관련하여 운영자와
             이용자 간 권리·의무 및 책임사항, 기타 필요한 사항을 규정함을 목적으로 합니다.
           </p>
         </section>
@@ -183,7 +183,7 @@ export default function TermsOfService({
         <section>
           <h2 className={`text-lg font-bold mb-3 ${isTossMode ? "text-slate-900" : "text-white"}`}>제14조 (운영자 정보 및 문의)</h2>
           <ul className={`space-y-1 ${isTossMode ? "text-slate-700" : "text-slate-300"}`}>
-            <li><strong className={isTossMode ? "text-slate-900" : "text-white"}>서비스명:</strong> 웹퍼즐</li>
+            <li><strong className={isTossMode ? "text-slate-900" : "text-white"}>서비스명:</strong> 퍼즐록스</li>
             <li><strong className={isTossMode ? "text-slate-900" : "text-white"}>상호:</strong> 종이천하(개인사업자)</li>
             <li><strong className={isTossMode ? "text-slate-900" : "text-white"}>대표자:</strong> 김철호</li>
             <li><strong className={isTossMode ? "text-slate-900" : "text-white"}>문의(이메일):</strong>{' '}
