@@ -38,6 +38,8 @@ const MINI_PAD_VISIBLE_STORAGE_KEY = 'puzzle_show_mini_pad';
 const NIGHTMARE_FLOAT_ROTATE_BTN_PX = 48;
 /** 조각 하단과 버튼 상단 사이 (CSS px) */
 const NIGHTMARE_FLOAT_ROTATE_GAP_PX = 4;
+/** 가로폭이 768px을 넘는 폰(가로 모드)도 `max-width:767` 미디어쿼리에서 빠지므로, 짧은 뷰포트 높이로 플로팅 회전 HUD 사용 */
+const NIGHTMARE_LANDSCAPE_PHONE_MAX_HEIGHT_PX = 520;
 const TOSS_WIDE_MODE_STORAGE_KEY = 'puzzle_toss_wide_mode';
 const OWNER_OVERLAY_OPACITY_STORAGE_KEY = "puzzle_owner_overlay_opacity_pct";
 const readStoredBool = (key: string, fallback: boolean) => {
@@ -249,6 +251,13 @@ export default function PuzzleBoard({
     if (typeof window === "undefined") return false;
     return window.matchMedia("(max-width: 767px) and (orientation: portrait)").matches;
   });
+  const [isLandscapePhoneForNightmareHud, setIsLandscapePhoneForNightmareHud] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return (
+      window.matchMedia("(orientation: landscape)").matches &&
+      window.innerHeight <= NIGHTMARE_LANDSCAPE_PHONE_MAX_HEIGHT_PX
+    );
+  });
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [mosaicUrl, setMosaicUrl] = useState("https://ewbjogsolylcbfmpmyfa.supabase.co/storage/v1/object/public/checki/2.jpg");
   const [mosaicQuick, setMosaicQuick] = useState(false);
@@ -267,7 +276,10 @@ export default function PuzzleBoard({
   const isNightmareRef = useRef(isNightmare);
   isNightmareRef.current = isNightmare;
   const isSmartphoneUiRef = useRef(false);
-  isSmartphoneUiRef.current = isMobilePortrait || isMobileLandscape;
+  /** 악몽 플로팅 회전: 좁은 가로(≤767) + 넓은 폰 가로(높이 짧음) 모두 조각 아래 고정 버튼 */
+  const nightmareFloatingRotateTouchLayout =
+    isMobilePortrait || isMobileLandscape || isLandscapePhoneForNightmareHud;
+  isSmartphoneUiRef.current = nightmareFloatingRotateTouchLayout;
   const [isCopied, setIsCopied] = useState(false);
   const [isTossWideMode, setIsTossWideMode] = useState(false);
   const tossWidePrefHydratedRef = useRef(false);
@@ -378,29 +390,39 @@ export default function PuzzleBoard({
     if (typeof window === "undefined") return;
     const mqlLandscape = window.matchMedia("(max-width: 767px) and (orientation: landscape)");
     const mqlPortrait = window.matchMedia("(max-width: 767px) and (orientation: portrait)");
+    const mqlOrientationLandscape = window.matchMedia("(orientation: landscape)");
     const apply = () => {
       setIsMobileLandscape(mqlLandscape.matches);
       setIsMobilePortrait(mqlPortrait.matches);
+      setIsLandscapePhoneForNightmareHud(
+        mqlOrientationLandscape.matches && window.innerHeight <= NIGHTMARE_LANDSCAPE_PHONE_MAX_HEIGHT_PX
+      );
     };
     apply();
     const onChange = () => apply();
     if (typeof mqlLandscape.addEventListener === "function") {
       mqlLandscape.addEventListener("change", onChange);
       mqlPortrait.addEventListener("change", onChange);
+      mqlOrientationLandscape.addEventListener("change", onChange);
     } else {
       mqlLandscape.addListener(onChange);
       mqlPortrait.addListener(onChange);
+      mqlOrientationLandscape.addListener(onChange);
     }
     window.addEventListener("resize", apply);
+    window.addEventListener("orientationchange", apply);
     return () => {
       if (typeof mqlLandscape.removeEventListener === "function") {
         mqlLandscape.removeEventListener("change", onChange);
         mqlPortrait.removeEventListener("change", onChange);
+        mqlOrientationLandscape.removeEventListener("change", onChange);
       } else {
         mqlLandscape.removeListener(onChange);
         mqlPortrait.removeListener(onChange);
+        mqlOrientationLandscape.removeListener(onChange);
       }
       window.removeEventListener("resize", apply);
+      window.removeEventListener("orientationchange", apply);
     };
   }, []);
 
@@ -5419,10 +5441,17 @@ export default function PuzzleBoard({
 
           bevelContainer.destroy({ children: true });
 
-          const at = spriteParent.getChildIndex(oldNode);
           spriteParent.removeChild(oldNode);
           oldNode.destroy({ children: true });
-          spriteParent.addChildAt(pieceSprite, at);
+          // 앞면 스프라이트는 항상 맨 아래(소유자·뒷면 오버레이보다 먼저 그려짐)
+          spriteParent.addChildAt(pieceSprite, 0);
+
+          const onBackFace = (pieceContainer as any).__isBackFace === true;
+          pieceSprite.visible = !onBackFace;
+          const ownerOv = spriteParent.getChildByLabel("ownerOverlay");
+          if (ownerOv) ownerOv.renderable = !onBackFace;
+          const backOv = spriteParent.getChildByLabel("backFaceOverlay");
+          if (backOv) backOv.visible = onBackFace;
         };
 
         const scheduleDeferredBevelUpgrades = () => {
@@ -6393,7 +6422,7 @@ export default function PuzzleBoard({
     <div className="w-full h-full relative" style={boardFrameStyle}>
       {nightmareFloatingRotatePos != null &&
       isNightmare &&
-      (isMobilePortrait || isMobileLandscape) ? (
+      nightmareFloatingRotateTouchLayout ? (
         <button
           type="button"
           onPointerDown={(e) => e.stopPropagation()}
@@ -6892,7 +6921,7 @@ export default function PuzzleBoard({
             </>
           )}
 
-          {isNightmare && !(isMobilePortrait || isMobileLandscape) ? (
+          {isNightmare && !nightmareFloatingRotateTouchLayout ? (
             <button
               onClick={() => rotateFlipSelectionRef.current?.()}
               className={`flex items-center justify-center w-7 h-7 rounded-md transition-colors border shrink-0 ${
