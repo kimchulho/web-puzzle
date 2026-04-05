@@ -1,5 +1,5 @@
 ﻿import React, { useState, useEffect, useRef } from 'react';
-import { Trophy, RefreshCw, Users, Lock, Image as ImageIcon, Play, Plus, Grid, Clock, RotateCcw, Maximize, Minimize, LogOut, ShieldAlert, LogIn, ChevronDown, Languages } from 'lucide-react';
+import { Trophy, RefreshCw, Users, Lock, Image as ImageIcon, Play, Plus, Grid, Clock, RotateCcw, Maximize, Minimize, LogOut, ShieldAlert, LogIn, ChevronDown, Languages, Filter } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
 import { motion } from 'motion/react';
 import { encodeRoomId, parseRoomNumberOrCode } from '../lib/roomCode';
@@ -217,6 +217,28 @@ function sortActiveRoomsForLobby(
   });
 }
 
+type LobbyDifficultyFilter = "all" | PuzzleDifficulty;
+
+function roomRowDifficulty(room: { difficulty?: unknown }): PuzzleDifficulty {
+  return normalizePuzzleDifficulty(room.difficulty);
+}
+
+/** 난이도 뱃지 (진행 중·완료 방 카드 공통) */
+function roomDifficultyBadgeClass(d: PuzzleDifficulty, tossLight: boolean): string {
+  const base =
+    "backdrop-blur-sm text-[10px] font-semibold px-2 py-0.5 rounded-md border leading-tight shrink-0";
+  if (tossLight) {
+    if (d === "easy") return `${base} bg-emerald-50/95 text-emerald-800 border-emerald-200`;
+    if (d === "medium") return `${base} bg-sky-50/95 text-sky-900 border-[#BFDBFE]`;
+    if (d === "hard") return `${base} bg-amber-50/95 text-amber-900 border-amber-200`;
+    return `${base} bg-violet-50/95 text-violet-900 border-violet-200`;
+  }
+  if (d === "easy") return `${base} bg-emerald-500/15 text-emerald-300 border-emerald-500/35`;
+  if (d === "medium") return `${base} bg-sky-500/15 text-sky-300 border-sky-500/35`;
+  if (d === "hard") return `${base} bg-amber-500/15 text-amber-300 border-amber-500/40`;
+  return `${base} bg-violet-500/15 text-violet-300 border-violet-500/40`;
+}
+
 declare global {
   interface Window {
     googletag?: any;
@@ -273,6 +295,8 @@ const Lobby = ({
   const [roomCodeInput, setRoomCodeInput] = useState('');
   const [roomCodeError, setRoomCodeError] = useState<string | null>(null);
   const [isJoiningByCode, setIsJoiningByCode] = useState(false);
+  /** 진행 중·완료 방 목록 공통 난이도 필터 */
+  const [lobbyDifficultyFilter, setLobbyDifficultyFilter] = useState<LobbyDifficultyFilter>("all");
   const gptLoadPromiseRef = useRef<Promise<void> | null>(null);
   const gptServicesEnabledRef = useRef(false);
   const isKo = locale === 'ko';
@@ -1500,6 +1524,56 @@ const Lobby = ({
                   : 'If the button says “Join after ad”, you’ll watch a short ad before entering.'}
               </p>
             ) : null}
+            <div className={`mt-3 space-y-2 ${tossSkin ? "pt-1" : "pt-0"}`}>
+              <div
+                className={`flex items-center gap-2 text-xs font-semibold ${
+                  tossSkin ? "text-slate-700" : "text-slate-400"
+                }`}
+              >
+                <Filter className="w-3.5 h-3.5 shrink-0 opacity-80" aria-hidden />
+                {isKo ? "난이도 필터" : "Difficulty filter"}
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setLobbyDifficultyFilter("all")}
+                  className={`rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                    lobbyDifficultyFilter === "all"
+                      ? tossSkin
+                        ? tossSkin.pillOn
+                        : "bg-indigo-500 text-white"
+                      : tossSkin
+                        ? tossSkin.pillOff
+                        : "bg-slate-800 text-slate-400 hover:bg-slate-700"
+                  }`}
+                >
+                  {isKo ? "전체" : "All"}
+                </button>
+                {PUZZLE_DIFFICULTIES.map((d) => (
+                  <button
+                    key={d}
+                    type="button"
+                    onClick={() => setLobbyDifficultyFilter(d)}
+                    className={`rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                      lobbyDifficultyFilter === d
+                        ? tossSkin
+                          ? tossSkin.pillOn
+                          : "bg-indigo-500 text-white"
+                        : tossSkin
+                          ? tossSkin.pillOff
+                          : "bg-slate-800 text-slate-400 hover:bg-slate-700"
+                    }`}
+                  >
+                    {puzzleDifficultyLabel(d, isKo)}
+                  </button>
+                ))}
+              </div>
+              <p className={`text-[11px] leading-snug ${tossSkin ? "text-slate-500" : "text-slate-500"}`}>
+                {isKo
+                  ? "진행 중인 퍼즐방과 완료된 퍼즐방 목록 모두에 적용됩니다."
+                  : "Applies to both active and completed room lists."}
+              </p>
+            </div>
           </div>
 
           <div className="flex-1 overflow-y-auto pr-2 space-y-3 custom-scrollbar">
@@ -1543,7 +1617,32 @@ const Lobby = ({
                 continueRoomOrder,
                 serverVisitAtMs
               );
-              return displayActiveRooms.map((room) => (
+              const filteredActiveRooms =
+                lobbyDifficultyFilter === "all"
+                  ? displayActiveRooms
+                  : displayActiveRooms.filter(
+                      (r) => roomRowDifficulty(r) === lobbyDifficultyFilter
+                    );
+              if (filteredActiveRooms.length === 0) {
+                return (
+                  <div
+                    className={`h-full flex flex-col items-center justify-center text-center px-2 ${
+                      tossSkin ? tossSkin.empty : "text-slate-500"
+                    }`}
+                  >
+                    <Filter className={`w-10 h-10 mb-2 opacity-25 ${tossSkin ? "text-[#2F6FE4]" : ""}`} />
+                    <p className="text-sm">
+                      {isKo
+                        ? "선택한 난이도의 진행 중인 방이 없습니다."
+                        : "No active rooms for this difficulty."}
+                    </p>
+                    <p className="text-xs mt-1 opacity-80">
+                      {isKo ? "다른 난이도를 선택하거나 필터를 ‘전체’로 바꿔 보세요." : "Try another difficulty or choose “All”."}
+                    </p>
+                  </div>
+                );
+              }
+              return filteredActiveRooms.map((room) => (
                 <div
                   key={room.id}
                   className={`group h-[224px] rounded-2xl overflow-hidden transition-all duration-300 border flex flex-col ${
@@ -1588,8 +1687,8 @@ const Lobby = ({
                         </span>
                       )}
                     </div>
-                    <div className="absolute bottom-3 left-3 right-3 flex justify-between items-end">
-                      <div className="flex gap-2 items-center">
+                    <div className="absolute bottom-3 left-3 right-3 flex justify-between items-end gap-2">
+                      <div className="flex flex-wrap gap-1.5 items-center min-w-0">
                         <span
                           className={`backdrop-blur-sm text-xs font-medium px-2 py-1 rounded-md border ${
                             tossSkin
@@ -1598,6 +1697,12 @@ const Lobby = ({
                           }`}
                         >
                           {room.totalPieces || room.piece_count} {isKo ? "조각" : "Pieces"}
+                        </span>
+                        <span
+                          className={roomDifficultyBadgeClass(roomRowDifficulty(room), !!tossSkin)}
+                          title={isKo ? "방 난이도" : "Room difficulty"}
+                        >
+                          {puzzleDifficultyLabel(roomRowDifficulty(room), isKo)}
                         </span>
                         {room.has_password && (
                           <span
@@ -1610,11 +1715,11 @@ const Lobby = ({
                         )}
                       </div>
                       <span
-                        className={`text-xs flex items-center gap-1 ${
+                        className={`text-xs flex items-center gap-1 shrink-0 text-right ${
                           tossSkin ? "text-slate-600" : "text-slate-300"
                         }`}
                       >
-                        <Users className="w-3 h-3" /> {isKo ? "생성자" : "Created by"} {room.creator_name}
+                        <Users className="w-3 h-3 shrink-0" /> {isKo ? "생성자" : "Created by"} {room.creator_name}
                       </span>
                     </div>
                   </div>
@@ -1733,9 +1838,35 @@ const Lobby = ({
                 <Trophy className={`w-12 h-12 mb-3 ${tossSkin ? "opacity-30 text-[#2F6FE4]" : "opacity-20"}`} />
                 <p>{isKo ? "아직 완료된 퍼즐방이 없습니다." : "No completed puzzles yet."}</p>
               </div>
-            ) : (
+            ) : (() => {
+              const filteredCompleted =
+                lobbyDifficultyFilter === "all"
+                  ? completedRooms
+                  : completedRooms.filter(
+                      (r) => roomRowDifficulty(r) === lobbyDifficultyFilter
+                    );
+              if (filteredCompleted.length === 0) {
+                return (
+                  <div
+                    className={`h-full flex flex-col items-center justify-center text-center px-2 ${
+                      tossSkin ? tossSkin.empty : "text-slate-500"
+                    }`}
+                  >
+                    <Filter className={`w-10 h-10 mb-2 opacity-25 ${tossSkin ? "text-[#2F6FE4]" : ""}`} />
+                    <p className="text-sm">
+                      {isKo
+                        ? "선택한 난이도의 완료된 방이 없습니다."
+                        : "No completed rooms for this difficulty."}
+                    </p>
+                    <p className="text-xs mt-1 opacity-80">
+                      {isKo ? "다른 난이도를 선택하거나 필터를 ‘전체’로 바꿔 보세요." : "Try another difficulty or choose “All”."}
+                    </p>
+                  </div>
+                );
+              }
+              return (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-1 gap-3">
-                {completedRooms.map((room) => (
+                {filteredCompleted.map((room) => (
                   <div
                     key={room.id}
                     className={`group h-[224px] rounded-2xl overflow-hidden transition-all duration-300 border flex flex-col ${
@@ -1756,8 +1887,8 @@ const Lobby = ({
                           tossSkin ? "from-[#F4F8FF] via-transparent to-transparent" : "from-slate-950 to-transparent"
                         }`}
                       />
-                      <div className="absolute bottom-3 left-3 right-3 flex justify-between items-end">
-                        <div className="flex gap-2 items-center">
+                      <div className="absolute bottom-3 left-3 right-3 flex justify-between items-end gap-2">
+                        <div className="flex flex-wrap gap-1.5 items-center min-w-0">
                           <span
                             className={`backdrop-blur-sm text-xs font-medium px-2 py-1 rounded-md border ${
                               tossSkin
@@ -1766,6 +1897,12 @@ const Lobby = ({
                             }`}
                           >
                             {room.totalPieces || room.piece_count} {isKo ? "조각" : "Pieces"}
+                          </span>
+                          <span
+                            className={roomDifficultyBadgeClass(roomRowDifficulty(room), !!tossSkin)}
+                            title={isKo ? "방 난이도" : "Room difficulty"}
+                          >
+                            {puzzleDifficultyLabel(roomRowDifficulty(room), isKo)}
                           </span>
                           {room.has_password && (
                             <span
@@ -1780,11 +1917,11 @@ const Lobby = ({
                           )}
                         </div>
                         <span
-                          className={`text-xs flex items-center gap-1 ${
+                          className={`text-xs flex items-center gap-1 shrink-0 text-right ${
                             tossSkin ? "text-slate-600" : "text-slate-300"
                           }`}
                         >
-                          <Users className="w-3 h-3" /> {isKo ? "생성자" : "Created by"} {room.creator_name}
+                          <Users className="w-3 h-3 shrink-0" /> {isKo ? "생성자" : "Created by"} {room.creator_name}
                         </span>
                       </div>
                     </div>
@@ -1833,7 +1970,8 @@ const Lobby = ({
                   </div>
                 ))}
               </div>
-            )}
+              );
+            })()}
           </div>
         </div>
       </motion.div>

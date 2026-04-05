@@ -1035,8 +1035,8 @@ export default function PuzzleBoard({
           solvedPieceOwner.set(pieceId, owner);
           applyPieceOwnerOverlay(pieceId);
         };
-        /** 퍼즐 뒷면(이스터 에그): 흰색·검정 중간 단색 회색 */
-        const EASTER_SOLID_BACK_HEX = 0x9ca3af;
+        /** 퍼즐 뒷면(이스터 에그): 흰색·검정 중간 단색 회색(악몽 뒷면과 비슷한 톤) */
+        const EASTER_SOLID_BACK_HEX = 0x475569;
         const clearEasterSolidBack = (piece: PIXI.Container) => {
           const g = piece.getChildByLabel('easterSolidBack');
           if (g) {
@@ -4743,8 +4743,8 @@ export default function PuzzleBoard({
             backWrap.visible = false;
             const g = new PIXI.Graphics();
             applyPieceShape(g);
-            g.fill({ color: 0x9ca3af, alpha: 1 });
-            g.stroke({ color: 0x4b5563, alpha: 0.95, width: backStrokeW });
+            g.fill({ color: 0x475569, alpha: 1 });
+            g.stroke({ color: 0x334155, alpha: 0.95, width: backStrokeW });
             backWrap.addChild(g);
             const cx = pieceWidth / 2;
             const cy = pieceHeight / 2;
@@ -4766,7 +4766,7 @@ export default function PuzzleBoard({
           pieceGraphics.fill({ texture: texture, matrix: matrix, textureSpace: 'global' });
           pieceGraphics.stroke({ color: 0x000000, alpha: 0.2, width: strokeWidth });
 
-          const ENABLE_BEVEL = false;
+          const ENABLE_BEVEL = true;
           let renderTarget: PIXI.Container | PIXI.Graphics = pieceGraphics;
 
           if (ENABLE_BEVEL) {
