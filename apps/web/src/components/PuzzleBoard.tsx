@@ -1,6 +1,7 @@
 ﻿import React, {
   type CSSProperties,
   type MutableRefObject,
+  useCallback,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -229,6 +230,9 @@ export default function PuzzleBoard({
     readStoredNumber(OWNER_OVERLAY_OPACITY_STORAGE_KEY, 90, 10, 100)
   );
   const [showColorPicker, setShowColorPicker] = useState(false);
+  /** 모바일 툴바 `overflow-x-auto`에 `absolute` 패널이 잘림 → 작은 화면에서는 fixed + 버튼 기준 배치 */
+  const [colorPickerFixedStyle, setColorPickerFixedStyle] = useState<CSSProperties | undefined>(undefined);
+  const paletteTriggerRef = useRef<HTMLButtonElement | null>(null);
   const [showQrCode, setShowQrCode] = useState(false);
   const [isQrLoading, setIsQrLoading] = useState(false);
   const [isQrError, setIsQrError] = useState(false);
@@ -426,6 +430,50 @@ export default function PuzzleBoard({
       window.removeEventListener("orientationchange", apply);
     };
   }, []);
+
+  const updateFixedColorPickerPosition = useCallback(() => {
+    if (typeof window === "undefined") return;
+    /** 툴바 하단 `overflow-x-auto`(Tailwind 기본 `sm` 미만 + 토스 전 폭)에서 패널이 잘림 */
+    const narrowToolbar =
+      window.matchMedia("(max-width: 639px)").matches;
+    const useFixed = isMobilePortrait || isMobileLandscape || narrowToolbar;
+    if (!showColorPicker || !useFixed) {
+      setColorPickerFixedStyle(undefined);
+      return;
+    }
+    const el = paletteTriggerRef.current;
+    if (!el) {
+      setColorPickerFixedStyle(undefined);
+      return;
+    }
+    const r = el.getBoundingClientRect();
+    setColorPickerFixedStyle({
+      position: "fixed",
+      top: r.bottom + 8,
+      right: Math.max(8, window.innerWidth - r.right),
+      width: 140,
+      zIndex: 80,
+      boxSizing: "border-box",
+    });
+  }, [showColorPicker, isMobilePortrait, isMobileLandscape]);
+
+  useLayoutEffect(() => {
+    updateFixedColorPickerPosition();
+  }, [updateFixedColorPickerPosition]);
+
+  useEffect(() => {
+    if (!showColorPicker) return;
+    const mqlNarrow = window.matchMedia("(max-width: 639px)");
+    const sync = () => updateFixedColorPickerPosition();
+    mqlNarrow.addEventListener("change", sync);
+    window.addEventListener("resize", sync);
+    window.addEventListener("scroll", sync, true);
+    return () => {
+      mqlNarrow.removeEventListener("change", sync);
+      window.removeEventListener("resize", sync);
+      window.removeEventListener("scroll", sync, true);
+    };
+  }, [showColorPicker, updateFixedColorPickerPosition]);
 
   /** 악몽 플로팅 회전 버튼: 세로 스와이프가 페이지 당김/새로고침으로 이어지지 않도록 (touchstart는 막지 않아 탭·클릭 유지) */
   useEffect(() => {
@@ -7077,6 +7125,7 @@ export default function PuzzleBoard({
           <div className="relative">
             {isTossMode ? (
               <button
+                ref={paletteTriggerRef}
                 aria-label="배경색 변경"
                 onClick={() => setShowColorPicker(!showColorPicker)}
                 className="inline-flex items-center justify-center gap-1.5 h-8 min-w-[52px] px-3 rounded-lg bg-[#F4F8FF] text-[#2F6FE4]"
@@ -7087,7 +7136,8 @@ export default function PuzzleBoard({
                 </span>
               </button>
             ) : (
-              <button 
+              <button
+                ref={paletteTriggerRef}
                 onClick={() => setShowColorPicker(!showColorPicker)}
                 className={`flex items-center gap-1 px-1.5 h-7 rounded-md border transition-colors shrink-0 ${
                   showColorPicker
@@ -7102,9 +7152,16 @@ export default function PuzzleBoard({
             )}
             
             {showColorPicker && (
-              <div className={`absolute top-full mt-2 right-0 rounded-xl p-3 z-50 animate-in fade-in slide-in-from-top-2 w-[140px] ${
-                isTossMode ? "bg-white text-[#2F6FE4] shadow-[0_8px_20px_rgba(47,111,228,0.12)]" : "bg-slate-800 border border-slate-700"
-              }`}>
+              <div
+                className={`rounded-xl p-3 animate-in fade-in slide-in-from-top-2 w-[140px] ${
+                  colorPickerFixedStyle
+                    ? ""
+                    : "absolute top-full mt-2 right-0 z-50"
+                } ${
+                  isTossMode ? "bg-white text-[#2F6FE4] shadow-[0_8px_20px_rgba(47,111,228,0.12)]" : "bg-slate-800 border border-slate-700"
+                }`}
+                style={colorPickerFixedStyle}
+              >
                 <div className="flex items-center justify-between mb-2">
                   <span className={`text-xs font-medium ${isTossMode ? "text-[#2F6FE4]" : "text-slate-300"}`}>{isKo ? "배경" : "Background"}</span>
                   <button onClick={() => setShowColorPicker(false)} className={isTossMode ? "text-[#2F6FE4]" : "text-slate-500 hover:text-white"}>
