@@ -9,7 +9,7 @@
 } from 'react';
 import * as PIXI from 'pixi.js';
 import { throttle } from 'lodash';
-import { Clock, Users, Trophy, ChevronLeft, X, Palette, LayoutGrid, Zap, Heart, Image as ImageIcon, Bot, Maximize, Minimize, RotateCcw, Share2, Check, Plus, Minus, QrCode, Crosshair } from 'lucide-react';
+import { Clock, Users, Trophy, ChevronLeft, X, Palette, LayoutGrid, Zap, Heart, Image as ImageIcon, Bot, Maximize, Minimize, RotateCcw, Share2, Plus, Minus, Crosshair, Wifi, WifiOff } from 'lucide-react';
 import { io, Socket } from 'socket.io-client';
 import confetti from 'canvas-confetti';
 import {
@@ -285,7 +285,8 @@ export default function PuzzleBoard({
   const nightmareFloatingRotateTouchLayout =
     isMobilePortrait || isMobileLandscape || isLandscapePhoneForNightmareHud;
   isSmartphoneUiRef.current = nightmareFloatingRotateTouchLayout;
-  const [isCopied, setIsCopied] = useState(false);
+  /** QR 패널 안 「링크 복사」 성공 시 녹색 안내 */
+  const [qrPanelLinkCopied, setQrPanelLinkCopied] = useState(false);
   const [isTossWideMode, setIsTossWideMode] = useState(false);
   const tossWidePrefHydratedRef = useRef(false);
   const skipNextTossWideSaveRef = useRef(false);
@@ -319,12 +320,32 @@ export default function PuzzleBoard({
     }
   };
 
-  const handleShareLink = () => {
+  const copyRoomJoinLink = () => {
     const url = `${window.location.origin}/?room=${encodeRoomId(roomId)}`;
-    navigator.clipboard.writeText(url).then(() => {
-      setIsCopied(true);
-      setTimeout(() => setIsCopied(false), 2000);
+    void navigator.clipboard.writeText(url).then(() => {
+      setQrPanelLinkCopied(true);
+      window.setTimeout(() => setQrPanelLinkCopied(false), 2500);
     });
+  };
+
+  const canNativeShare =
+    typeof navigator !== "undefined" && typeof navigator.share === "function";
+
+  const shareRoomInvite = () => {
+    const url = `${window.location.origin}/?room=${encodeRoomId(roomId)}`;
+    const text = isKo
+      ? `퍼즐록스에서 퍼즐 맞춰요! ${url}`
+      : `Let's puzzle together on Puzzlox! ${url}`;
+    void navigator
+      .share({
+        title: isKo ? "퍼즐록스" : "Puzzlox",
+        text,
+        url,
+      })
+      .catch((err: unknown) => {
+        const name = err instanceof Error ? err.name : "";
+        if (name === "AbortError") return;
+      });
   };
   const handleReconnectSocket = () => {
     const socket = socketRef.current;
@@ -343,6 +364,10 @@ export default function PuzzleBoard({
     setIsQrLoading(true);
     setIsQrError(false);
   }, [showQrCode, roomQrUrl]);
+
+  useEffect(() => {
+    if (!showQrCode) setQrPanelLinkCopied(false);
+  }, [showQrCode]);
 
   const PRESET_COLORS = [
     '#0f172a', // slate-900
@@ -6709,47 +6734,48 @@ export default function PuzzleBoard({
               <span className={`text-xs font-medium ${isTossMode ? "text-blue-700" : "text-slate-300"}`}>#{encodeRoomId(roomId)}</span>
               <div className="relative flex items-center gap-1">
                 {isTossMode ? (
-                  <>
-                    <button
-                      aria-label={isCopied ? "링크 복사됨" : "링크 공유"}
-                      onClick={handleShareLink}
-                      className="inline-flex items-center justify-center h-6 w-6 rounded-md bg-[#EAF2FF] text-[#2F6FE4]"
-                    >
-                      {isCopied ? <Check size={12} className="text-[#2F6FE4]" /> : <Share2 size={12} className="text-[#2F6FE4]" />}
-                    </button>
-                    <button
-                      aria-label={isKo ? "QR 코드" : "QR code"}
-                      onClick={() => setShowQrCode((v) => !v)}
-                      className={`inline-flex items-center justify-center h-6 w-6 rounded-md ${
-                        showQrCode ? "bg-[#2F6FE4] text-white" : "bg-[#EAF2FF] text-[#2F6FE4]"
-                      }`}
-                      title={isKo ? "입장 QR 코드" : "Room QR code"}
-                    >
-                      <QrCode size={12} />
-                    </button>
-                  </>
+                  <button
+                    type="button"
+                    aria-label={
+                      showQrCode
+                        ? isKo
+                          ? "QR·링크 창 닫기"
+                          : "Close share panel"
+                        : isKo
+                          ? "입장 QR·링크 공유"
+                          : "Room QR and link"
+                    }
+                    onClick={() => setShowQrCode((v) => !v)}
+                    className={`inline-flex items-center justify-center h-6 w-6 rounded-md transition-colors ${
+                      showQrCode ? "bg-[#2F6FE4] text-white" : "bg-[#EAF2FF] text-[#2F6FE4]"
+                    }`}
+                    title={isKo ? "입장 QR·링크" : "Room QR & link"}
+                  >
+                    <Share2 size={12} className={showQrCode ? "text-white" : "text-[#2F6FE4]"} />
+                  </button>
                 ) : (
-                  <>
-                    <button
-                      onClick={handleShareLink}
-                      className="flex items-center justify-center text-slate-400 hover:text-white transition-colors"
-                      title="Share Link"
-                    >
-                      {isCopied ? <Check size={14} className="text-emerald-400" /> : <Share2 size={14} />}
-                    </button>
-                    <button
-                      onClick={() => setShowQrCode((v) => !v)}
-                      className={`flex items-center justify-center transition-colors ${
-                        showQrCode ? "text-indigo-300" : "text-slate-400 hover:text-white"
-                      }`}
-                      title={isKo ? "입장 QR 코드" : "Room QR code"}
-                    >
-                      <QrCode size={14} />
-                    </button>
-                  </>
+                  <button
+                    type="button"
+                    aria-label={
+                      showQrCode
+                        ? isKo
+                          ? "QR·링크 창 닫기"
+                          : "Close share panel"
+                        : isKo
+                          ? "입장 QR·링크 공유"
+                          : "Room QR and link"
+                    }
+                    onClick={() => setShowQrCode((v) => !v)}
+                    className={`flex items-center justify-center transition-colors ${
+                      showQrCode ? "text-indigo-300" : "text-slate-400 hover:text-white"
+                    }`}
+                    title={isKo ? "입장 QR·링크" : "Room QR & link"}
+                  >
+                    <Share2 size={14} />
+                  </button>
                 )}
                 {showQrCode && (
-                  <div className={`absolute top-full mt-2 left-0 rounded-xl p-3 z-50 animate-in fade-in slide-in-from-top-2 w-[174px] ${
+                  <div className={`absolute top-full mt-2 left-0 rounded-xl p-3 z-50 animate-in fade-in slide-in-from-top-2 w-[200px] ${
                     isTossMode
                       ? "bg-white border border-[#D9E8FF] shadow-[0_10px_24px_rgba(47,111,228,0.14)]"
                       : "bg-slate-800 border border-slate-700"
@@ -6801,16 +6827,48 @@ export default function PuzzleBoard({
                         />
                       </div>
                     </div>
-                    <button
-                      onClick={handleShareLink}
-                      className={`mt-2 block mx-auto w-[150px] text-[11px] py-1.5 rounded-md border transition-colors ${
-                        isTossMode
-                          ? "bg-[#EAF2FF] border-[#CFE2FF] text-[#2F6FE4]"
-                          : "bg-slate-700/50 border-slate-600 text-slate-200 hover:bg-slate-700"
-                      }`}
+                    <div
+                      className={`mt-2 mx-auto flex gap-1.5 ${canNativeShare ? "w-full max-w-[174px]" : "w-[150px]"}`}
                     >
-                      {isKo ? "링크 복사" : "Copy link"}
-                    </button>
+                      <button
+                        type="button"
+                        onClick={copyRoomJoinLink}
+                        className={`min-w-0 flex-1 text-[10px] leading-tight py-1.5 px-1 rounded-md border transition-colors ${
+                          qrPanelLinkCopied
+                            ? isTossMode
+                              ? "bg-emerald-50 border-emerald-400 text-emerald-700"
+                              : "bg-emerald-500/15 border-emerald-500/50 text-emerald-300"
+                            : isTossMode
+                              ? "bg-[#EAF2FF] border-[#CFE2FF] text-[#2F6FE4]"
+                              : "bg-slate-700/50 border-slate-600 text-slate-200 hover:bg-slate-700"
+                        }`}
+                      >
+                        {isKo ? "링크 복사" : "Copy link"}
+                      </button>
+                      {canNativeShare ? (
+                        <button
+                          type="button"
+                          onClick={shareRoomInvite}
+                          className={
+                            isTossMode
+                              ? "min-w-0 flex-1 text-[10px] leading-tight py-1.5 px-1 rounded-md border border-[#CFE2FF] bg-white text-[#2F6FE4] hover:bg-[#F4F8FF]"
+                              : "min-w-0 flex-1 text-[10px] leading-tight py-1.5 px-1 rounded-md border border-slate-500 bg-slate-700/30 text-slate-100 hover:bg-slate-600/50"
+                          }
+                        >
+                          {isKo ? "공유하기" : "Share"}
+                        </button>
+                      ) : null}
+                    </div>
+                    {qrPanelLinkCopied ? (
+                      <p
+                        className={`mt-1.5 text-center text-[10px] font-semibold ${
+                          isTossMode ? "text-emerald-600" : "text-emerald-400"
+                        }`}
+                        role="status"
+                      >
+                        {isKo ? "링크가 복사되었습니다" : "Link copied"}
+                      </p>
+                    ) : null}
                   </div>
                 )}
               </div>
@@ -6818,7 +6876,7 @@ export default function PuzzleBoard({
             <div className="relative" ref={connectionStatusWrapRef}>
               <button
                 onClick={() => setShowConnectionStatusPopup((v) => !v)}
-                className={`flex items-center gap-1 px-2 h-7 rounded-md border shrink-0 ${
+                className={`flex items-center justify-center w-7 h-7 rounded-md border shrink-0 ${
                   isTossMode
                     ? (isGameSocketConnected
                         ? "bg-[#EAF2FF] border-[#CFE2FF] text-[#2F6FE4]"
@@ -6830,18 +6888,11 @@ export default function PuzzleBoard({
                 title={connectionStatusTitle}
                 aria-label={connectionStatusTitle}
               >
-                <span
-                  className={`inline-block w-1.5 h-1.5 rounded-full ${
-                    isGameSocketConnected
-                      ? (isTossMode ? "bg-[#2F6FE4]" : "bg-emerald-400")
-                      : (isTossMode ? "bg-[#E11D48]" : "bg-rose-400")
-                  }`}
-                />
-                <span className="text-[10px] font-semibold whitespace-nowrap">
-                  {isKo
-                    ? (isGameSocketConnected ? "연결됨" : "연결끊김")
-                    : (isGameSocketConnected ? "Online" : "Offline")}
-                </span>
+                {isGameSocketConnected ? (
+                  <Wifi className="w-4 h-4 shrink-0" strokeWidth={2.25} aria-hidden />
+                ) : (
+                  <WifiOff className="w-4 h-4 shrink-0" strokeWidth={2.25} aria-hidden />
+                )}
               </button>
               {showConnectionStatusPopup && (
                 <div
