@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS public.rooms (
   created_by BIGINT NULL,
   CONSTRAINT rooms_pkey PRIMARY KEY (id),
   CONSTRAINT rooms_difficulty_check CHECK (
-    difficulty = ANY (ARRAY['easy'::text, 'medium'::text, 'hard'::text])
+    difficulty = ANY (ARRAY['easy'::text, 'medium'::text, 'hard'::text, 'nightmare'::text])
   ),
   CONSTRAINT rooms_created_by_fkey FOREIGN KEY (created_by) REFERENCES users (id) ON DELETE SET NULL
 ) TABLESPACE pg_default;
@@ -49,7 +49,12 @@ CREATE TABLE IF NOT EXISTS public.pieces (
   y DOUBLE PRECISION NULL,
   is_locked BOOLEAN NULL DEFAULT false,
   snapped_by TEXT NULL,
+  rotation_quarter SMALLINT NULL DEFAULT 0,
+  is_back_face BOOLEAN NULL DEFAULT false,
   CONSTRAINT pieces_pkey PRIMARY KEY (room_id, piece_index),
+  CONSTRAINT pieces_rotation_quarter_check CHECK (
+    rotation_quarter = ANY (ARRAY[0, 1, 2, 3])
+  ),
   CONSTRAINT pieces_room_id_fkey FOREIGN KEY (room_id) REFERENCES rooms (id) ON DELETE CASCADE
 ) TABLESPACE pg_default;
 

@@ -1269,7 +1269,7 @@ const Lobby = ({
               >
                 <ShieldAlert className="w-4 h-4" /> {isKo ? "난이도" : "Difficulty"}
               </label>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-4 gap-2">
                 {PUZZLE_DIFFICULTIES.map((d) => (
                   <button
                     key={d}
@@ -1296,11 +1296,15 @@ const Lobby = ({
                       : "Easy: 20% transparent guide image is always visible.")
                   : difficulty === "medium"
                   ? (isKo
-                      ? "중급: 맞춘 조각 주변만 20% 투명 밑그림이 점진적으로 드러납니다."
-                      : "Medium: 20% guide is revealed only around solved pieces.")
-                  : (isKo
+                      ? "중급: 전체 20% 밑그림이 보이며, 진행도 5%마다 투명도가 1%씩 감소합니다."
+                      : "Medium: full 20% guide is shown, and opacity drops by 1% every 5% progress.")
+                  : difficulty === "hard"
+                  ? (isKo
                       ? "고급: 밑그림 없음. 내부 조각은 테두리/고정 체인과 연결될 때만 정위치 고정됩니다."
-                      : "Hard: no guide; inner pieces lock only when connected to border/locked chain.")}
+                      : "Hard: no guide; inner pieces lock only when connected to border/locked chain.")
+                  : (isKo
+                      ? "악몽: 고급 규칙 + 조각 회전/앞면 뒤집기. 시작 시 일부 조각이 뒤집히고 회전됩니다."
+                      : "Nightmare: hard rules + piece rotation/front-side flip. Pieces start partially flipped and rotated.")}
               </p>
             </div>
 

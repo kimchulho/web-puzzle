@@ -36,7 +36,15 @@ export interface MoveBatchPayload {
   roomId: number;
   userId?: string;
   snapped?: boolean;
-  updates: { pieceId: number; x: number; y: number; isLocked?: boolean; snappedBy?: string }[];
+  updates: {
+    pieceId: number;
+    x: number;
+    y: number;
+    isLocked?: boolean;
+    snappedBy?: string;
+    rotationQuarter?: number;
+    isBackFace?: boolean;
+  }[];
 }
 
 export interface CursorMovePayload {

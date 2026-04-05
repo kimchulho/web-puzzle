@@ -18,6 +18,6 @@ BEGIN
   ) THEN
     ALTER TABLE public.rooms
     ADD CONSTRAINT rooms_difficulty_check
-    CHECK (difficulty IN ('easy', 'medium', 'hard'));
+    CHECK (difficulty IN ('easy', 'medium', 'hard', 'nightmare'));
   END IF;
 END $$;

@@ -26,7 +26,7 @@ import { REALTIME_CHANNEL_STATES } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabaseClient';
 import { encodeRoomId } from '../lib/roomCode';
 import { recordUserRoomVisit } from '../lib/recordUserRoomVisit';
-import { canClusterLockOnBoard, normalizePuzzleDifficulty, type PuzzleDifficulty } from '../lib/puzzleDifficulty';
+import { canClusterLockOnBoard, canPieceLockOnBoard, normalizePuzzleDifficulty, type PuzzleDifficulty } from '../lib/puzzleDifficulty';
 import { createPuzzleHintLayer, type PuzzleHintLayer } from '../lib/puzzleHintLayer';
 
 const SNAP_THRESHOLD = 30;
@@ -197,6 +197,7 @@ export default function PuzzleBoard({
   const gatherBordersRef = useRef<(() => void) | null>(null);
   const gatherByColorRef = useRef<((quick?: boolean) => void) | null>(null);
   const createMosaicFromImageRef = useRef<((imageUrl: string, quick?: boolean, gapMultiplier?: number) => Promise<void>) | null>(null);
+  const rotateFlipSelectionRef = useRef<(() => void) | null>(null);
   const initialPositionsRef = useRef<{x: number, y: number}[]>([]);
   const isBotRunningRef = useRef(false);
   const isColorBotRunningRef = useRef(false);
@@ -252,6 +253,7 @@ export default function PuzzleBoard({
   const [maxPlayers, setMaxPlayers] = useState(8);
   const isKo = locale === 'ko';
   const puzzleDifficulty = normalizePuzzleDifficulty(difficulty);
+  const isNightmare = puzzleDifficulty === "nightmare";
   const [isCopied, setIsCopied] = useState(false);
   const [isTossWideMode, setIsTossWideMode] = useState(false);
   const tossWidePrefHydratedRef = useRef(false);
@@ -265,6 +267,26 @@ export default function PuzzleBoard({
   const showPieceOwnerOverlayRef = useRef(showPieceOwnerOverlay);
   const ownerOverlayOpacityRef = useRef(ownerOverlayOpacityPct / 100);
   const boardLockedPieceIdsRef = useRef<Set<number>>(new Set());
+
+  const normalizeRotationQuarter = (value: unknown) => {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return 0;
+    return ((Math.round(n) % 4) + 4) % 4;
+  };
+  const applyPieceOrientationVisual = (piece: PIXI.Container, rotationQuarter: number, isBackFace: boolean) => {
+    (piece as any).__rotationQuarter = normalizeRotationQuarter(rotationQuarter);
+    (piece as any).__isBackFace = isBackFace === true;
+    const visual = piece.getChildByLabel("pieceVisual") as PIXI.Container | null;
+    if (visual) {
+      visual.rotation = ((piece as any).__rotationQuarter * Math.PI) / 2;
+      const pieceSprite = visual.getChildByLabel("pieceSprite") as PIXI.DisplayObject | null;
+      if (pieceSprite) pieceSprite.visible = (piece as any).__isBackFace !== true;
+      const ownerOverlay = visual.getChildByLabel("ownerOverlay") as PIXI.DisplayObject | null;
+      if (ownerOverlay) ownerOverlay.renderable = (piece as any).__isBackFace !== true;
+      const backOverlay = visual.getChildByLabel("backFaceOverlay") as PIXI.DisplayObject | null;
+      if (backOverlay) backOverlay.visible = (piece as any).__isBackFace === true;
+    }
+  };
 
   const handleShareLink = () => {
     const url = `${window.location.origin}/?room=${encodeRoomId(roomId)}`;
@@ -448,6 +470,20 @@ export default function PuzzleBoard({
     }
   }, [isTossMode, isTossWideMode]);
 
+  useEffect(() => {
+    if (!isNightmare || typeof window === "undefined") return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.repeat) return;
+      if (e.key.toLowerCase() !== "r") return;
+      const tag = (e.target as HTMLElement | null)?.tagName?.toLowerCase();
+      if (tag === "input" || tag === "textarea") return;
+      e.preventDefault();
+      rotateFlipSelectionRef.current?.();
+    };
+    window.addEventListener("keydown", onKeyDown, { passive: false });
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [isNightmare]);
+
   const toggleFullscreen = async () => {
     try {
       if (!document.fullscreenElement) {
@@ -584,7 +620,7 @@ export default function PuzzleBoard({
       try {
         const [{ data: scoreData }, { data: pieceData }] = await Promise.all([
           supabase.from("scores").select("*").eq("room_id", roomId).order("score", { ascending: false }),
-          supabase.from("pieces").select("piece_index, x, y, is_locked").eq("room_id", roomId),
+          supabase.from("pieces").select("piece_index, x, y, is_locked, rotation_quarter, is_back_face").eq("room_id", roomId),
         ]);
         if (Array.isArray(scoreData)) {
           setScores(scoreData);
@@ -600,6 +636,12 @@ export default function PuzzleBoard({
             const nextY = Number(row.y);
             if (Number.isFinite(nextX)) piece.x = nextX;
             if (Number.isFinite(nextY)) piece.y = nextY;
+            const isLockedRow = row.is_locked === true;
+            applyPieceOrientationVisual(
+              piece,
+              isLockedRow ? 0 : ((row as any).rotation_quarter ?? 0),
+              isLockedRow ? false : ((row as any).is_back_face === true)
+            );
             if (row.is_locked === true) {
               piece.eventMode = "none";
               piece.zIndex = 0;
@@ -933,8 +975,16 @@ export default function PuzzleBoard({
           smoothedZ: null as number | null,
           lastSwitchAt: 0,
         };
+        const getPieceVisualChild = (piece: PIXI.Container, label: string): PIXI.DisplayObject | null => {
+          const visual = piece.getChildByLabel("pieceVisual") as PIXI.Container | null;
+          if (visual) {
+            const inner = visual.getChildByLabel(label);
+            if (inner) return inner;
+          }
+          return piece.getChildByLabel(label);
+        };
         const getPieceSprite = (piece: PIXI.Container): PIXI.Sprite | PIXI.Container | null => {
-          const node = piece.getChildByLabel('pieceSprite');
+          const node = getPieceVisualChild(piece, "pieceSprite");
           if (!node) return null;
           if (node instanceof PIXI.Sprite) return node;
           if (node instanceof PIXI.Container) return node;
@@ -943,7 +993,7 @@ export default function PuzzleBoard({
         const applyPieceOwnerOverlay = (pieceId: number) => {
           const piece = pieces.current.get(pieceId);
           if (!piece) return;
-          const overlay = piece.getChildByLabel("ownerOverlay") as PIXI.Graphics | null;
+          const overlay = getPieceVisualChild(piece, "ownerOverlay") as PIXI.Graphics | null;
           if (!overlay) return;
           const owner = solvedPieceOwner.get(pieceId);
           if (!showPieceOwnerOverlayRef.current || !owner) {
@@ -1302,6 +1352,7 @@ export default function PuzzleBoard({
                 if (lockIcon) lockIcon.visible = true;
                 p.zIndex = topZIndex;
                 selectedOffsets.set(id, dragOffsets.get(id)!);
+                targetPositions.delete(id);
               });
               
               sendLockBatch(Array.from(selectedCluster));
@@ -1389,11 +1440,33 @@ export default function PuzzleBoard({
                     
                     if (newPieces.length > 0) {
                       sendLockBatch(newPieces);
+                      let refId = firstId;
+                      let offRef = selectedOffsets.get(refId);
+                      if (!offRef) {
+                        for (const sid of selectedCluster!) {
+                          const o = selectedOffsets.get(sid);
+                          if (o) {
+                            refId = sid;
+                            offRef = o;
+                            break;
+                          }
+                        }
+                      }
+                      const refP = pieces.current.get(refId)!;
+                      const virtualLx = offRef ? refP.x + offRef.x : refP.x;
+                      const virtualLy = offRef ? refP.y + offRef.y : refP.y;
                       newPieces.forEach(id => {
                         const p = pieces.current.get(id)!;
                         const lockIcon = p.getChildByLabel('lockIcon');
                         if (lockIcon) lockIcon.visible = true;
                         selectedCluster!.add(id);
+                        targetPositions.delete(id);
+                        if (offRef) {
+                          selectedOffsets.set(id, {
+                            x: virtualLx - p.x,
+                            y: virtualLy - p.y,
+                          });
+                        }
                       });
                     }
                   }
@@ -1460,6 +1533,8 @@ export default function PuzzleBoard({
           });
 
           targetPositions.forEach((target, id) => {
+            if (selectedCluster?.has(id)) return;
+            if (isDragging && dragCluster.has(id)) return;
             const p = pieces.current.get(id);
             if (p) {
               const dx = target.x - p.x;
@@ -1982,7 +2057,6 @@ export default function PuzzleBoard({
         boardBg.zIndex = -1;
         world.addChild(boardBg);
         hintLayer = createPuzzleHintLayer({
-          renderer: app.renderer,
           world,
           texture,
           boardStartX,
@@ -2046,8 +2120,12 @@ export default function PuzzleBoard({
           drawC(p(0.610, -0.127), p(0.807, 0), p(1.000, 0));
         };
 
+        const dbgPiecePersist =
+          import.meta.env.VITE_LOG_PIECE_PERSIST === "1" ||
+          String(import.meta.env.VITE_LOG_PIECE_PERSIST).toLowerCase() === "true";
+
         const sendMoveBatch = throttle((
-          updates: {pieceId: number, x: number, y: number, isLocked?: boolean, snappedBy?: string}[],
+          updates: {pieceId: number, x: number, y: number, isLocked?: boolean, snappedBy?: string, rotationQuarter?: number, isBackFace?: boolean}[],
           opts?: { snapped?: boolean }
         ) => {
           if (updates.length === 0) return;
@@ -2055,7 +2133,36 @@ export default function PuzzleBoard({
           if (socket && socket.connected) {
             const currentUsername = user ? user.username : localStorage.getItem('puzzle_guest_name');
             const me = currentUsername != null && currentUsername !== '' ? String(currentUsername) : 'guest';
-            socket.emit(ROOM_EVENTS.MoveBatch, { roomId, userId: me, snapped: opts?.snapped === true, updates });
+            const outgoing = updates.map((u) => {
+              const piece = pieces.current.get(u.pieceId);
+              const rotationQuarter = u.rotationQuarter ?? normalizeRotationQuarter((piece as any)?.__rotationQuarter ?? 0);
+              const isBackFace = u.isBackFace ?? ((piece as any)?.__isBackFace === true);
+              return {
+                pieceId: u.pieceId,
+                x: u.x,
+                y: u.y,
+                ...(u.isLocked !== undefined ? { isLocked: u.isLocked } : {}),
+                ...(u.snappedBy != null && String(u.snappedBy).trim() !== ""
+                  ? { snappedBy: String(u.snappedBy).trim() }
+                  : {}),
+                rotationQuarter,
+                isBackFace,
+              };
+            });
+            if (dbgPiecePersist) {
+              console.info("[Puzzlox:persist] MoveBatch emit (socket)", {
+                roomId,
+                userId: me,
+                snapped: opts?.snapped === true,
+                count: outgoing.length,
+                orientation: outgoing.map((o) => ({
+                  id: o.pieceId,
+                  q: o.rotationQuarter,
+                  back: o.isBackFace,
+                })),
+              });
+            }
+            socket.emit(ROOM_EVENTS.MoveBatch, { roomId, userId: me, snapped: opts?.snapped === true, updates: outgoing });
           }
         }, 80);
 
@@ -2336,7 +2443,15 @@ export default function PuzzleBoard({
         };
 
         const PIECE_DB_FLUSH_MS = 1500;
-        const pieceStatePending = new Map<number, { piece_index: number; x: number; y: number; is_locked: boolean; snapped_by?: string }>();
+        const pieceStatePending = new Map<number, {
+          piece_index: number;
+          x: number;
+          y: number;
+          is_locked: boolean;
+          snapped_by?: string;
+          rotation_quarter?: number;
+          is_back_face?: boolean;
+        }>();
         let pieceStateFlushTimer: ReturnType<typeof setTimeout> | null = null;
         let pieceStateFlushInFlight = false;
         let pieceStateFlushRequested = false;
@@ -2362,14 +2477,36 @@ export default function PuzzleBoard({
                 y: number;
                 is_locked: boolean;
                 snapped_by?: string;
+                rotation_quarter: number;
+                is_back_face: boolean;
               } = {
                 room_id: roomId,
                 piece_index: u.piece_index,
                 x: u.x,
                 y: u.y,
                 is_locked: u.is_locked,
+                rotation_quarter: 0,
+                is_back_face: false,
               };
               if (u.snapped_by) row.snapped_by = u.snapped_by;
+              // Match sendMoveBatch: always persist orientation with coordinates (avoid partial upsert omitting columns).
+              const p = pieces.current.get(u.piece_index);
+              if (u.is_locked === true) {
+                row.rotation_quarter = 0;
+                row.is_back_face = false;
+              } else {
+                const rqPending = (u as any).rotation_quarter;
+                const rq =
+                  Number.isFinite(Number(rqPending))
+                    ? Number(rqPending)
+                    : normalizeRotationQuarter((p as any)?.__rotationQuarter ?? 0);
+                row.rotation_quarter = normalizeRotationQuarter(rq);
+                const bfPending = (u as any).is_back_face;
+                row.is_back_face =
+                  typeof bfPending === "boolean"
+                    ? bfPending === true
+                    : (p as any)?.__isBackFace === true;
+              }
               return row;
             });
             const { error } = await supabase
@@ -2389,7 +2526,7 @@ export default function PuzzleBoard({
           }
         };
         const savePiecesState = async (
-          updates: {piece_index: number, x: number, y: number, is_locked: boolean, snapped_by?: string}[],
+          updates: {piece_index: number, x: number, y: number, is_locked: boolean, snapped_by?: string, rotation_quarter?: number, is_back_face?: boolean}[],
           opts?: { immediate?: boolean }
         ) => {
           if (updates.length === 0) return;
@@ -2569,12 +2706,17 @@ export default function PuzzleBoard({
               const row = Math.floor(i / GRID_COLS);
               const targetX = boardStartX + col * pieceWidth;
               const targetY = boardStartY + row * pieceHeight;
-              if (Math.abs(p.x - targetX) < 1 && Math.abs(p.y - targetY) < 1) {
+              const canLockByOrientation = canPieceLockOnBoard(puzzleDifficulty, {
+                rotationQuarter: (p as any).__rotationQuarter,
+                isBackFace: (p as any).__isBackFace,
+              });
+              if (canLockByOrientation && Math.abs(p.x - targetX) < 1 && Math.abs(p.y - targetY) < 1) {
                 lockedCount++;
               }
             }
           }
           setPlacedPieces(lockedCount);
+          hintLayer?.setCompletionPercent((lockedCount / Math.max(1, PIECE_COUNT)) * 100);
           
           if (lockedCount === PIECE_COUNT) {
             isCompletedRef.current = true;
@@ -2670,6 +2812,18 @@ export default function PuzzleBoard({
           enqueueRealtimeBroadcast('scoreUpdate', { username: uname, score: newScore });
         };
 
+        const rotateGridDeltaByQuarter = (dx: number, dy: number, quarter: number) => {
+          const q = normalizeRotationQuarter(quarter);
+          if (q === 1) return { dx: -dy, dy: dx };
+          if (q === 2) return { dx: -dx, dy: -dy };
+          if (q === 3) return { dx: dy, dy: -dx };
+          return { dx, dy };
+        };
+        const getPieceQuarter = (piece: PIXI.Container) =>
+          normalizeRotationQuarter((piece as any).__rotationQuarter ?? 0);
+        const canNeighborAttachInNightmare = (p1: PIXI.Container, p2: PIXI.Container) =>
+          getPieceQuarter(p1) === getPieceQuarter(p2);
+
         const getConnectedCluster = (startId: number) => {
           const cluster = new Set<number>([startId]);
           const queue = [startId];
@@ -2694,8 +2848,14 @@ export default function PuzzleBoard({
                 const isLogicallyAdjacent = (Math.abs(c1 - c2) === 1 && r1 === r2) || (Math.abs(r1 - r2) === 1 && c1 === c2);
                 if (isLogicallyAdjacent) {
                   const p2 = pieces.current.get(i)!;
-                  const expectedX = p1.x + (c2 - c1) * pieceWidth;
-                  const expectedY = p1.y + (r2 - r1) * pieceHeight;
+                  if (isNightmare && !canNeighborAttachInNightmare(p1, p2)) {
+                    continue;
+                  }
+                  const baseDx = (c2 - c1) * pieceWidth;
+                  const baseDy = (r2 - r1) * pieceHeight;
+                  const rotated = rotateGridDeltaByQuarter(baseDx, baseDy, getPieceQuarter(p1));
+                  const expectedX = p1.x + rotated.dx;
+                  const expectedY = p1.y + rotated.dy;
                   if (Math.abs(p2.x - expectedX) < 1 && Math.abs(p2.y - expectedY) < 1) {
                     cluster.add(i);
                     queue.push(i);
@@ -2741,8 +2901,14 @@ export default function PuzzleBoard({
                 
                 if (isLogicallyAdjacent) {
                   const p2 = pieces.current.get(otherId)!;
-                  const expectedX = p2.x + (c1 - c2) * pieceWidth;
-                  const expectedY = p2.y + (r1 - r2) * pieceHeight;
+                  if (isNightmare && !canNeighborAttachInNightmare(p1, p2)) {
+                    continue;
+                  }
+                  const baseDx = (c1 - c2) * pieceWidth;
+                  const baseDy = (r1 - r2) * pieceHeight;
+                  const rotated = rotateGridDeltaByQuarter(baseDx, baseDy, getPieceQuarter(p2));
+                  const expectedX = p2.x + rotated.dx;
+                  const expectedY = p2.y + rotated.dy;
                   
                   if (Math.abs(p1.x - expectedX) < SNAP_THRESHOLD && Math.abs(p1.y - expectedY) < SNAP_THRESHOLD) {
                     offsetX = expectedX - p1.x;
@@ -2829,7 +2995,11 @@ export default function PuzzleBoard({
             const targetY = boardStartY + r * pieceHeight;
             
             let isLocked = false;
-            if (canClusterBoardLock && Math.abs(p.x - targetX) < 1 && Math.abs(p.y - targetY) < 1) {
+            const canLockByOrientation = canPieceLockOnBoard(puzzleDifficulty, {
+              rotationQuarter: (p as any).__rotationQuarter,
+              isBackFace: (p as any).__isBackFace,
+            });
+            if (canClusterBoardLock && canLockByOrientation && Math.abs(p.x - targetX) < 1 && Math.abs(p.y - targetY) < 1) {
               p.eventMode = 'none';
               p.zIndex = 0;
               const lockIcon = p.getChildByLabel('lockIcon');
@@ -2847,6 +3017,8 @@ export default function PuzzleBoard({
               y: p.y,
               is_locked: isLocked,
               snapped_by: solvedPieceOwner.get(id),
+              rotation_quarter: normalizeRotationQuarter((p as any).__rotationQuarter ?? 0),
+              is_back_face: (p as any).__isBackFace === true,
             });
           });
 
@@ -2902,6 +3074,116 @@ export default function PuzzleBoard({
           selectedCluster = null;
           isDraggingSelected = false;
         };
+        const rotateFlipSelectedCluster = () => {
+          const targetCluster = selectedCluster && selectedCluster.size > 0
+            ? selectedCluster
+            : (isDragging && dragCluster.size > 0 ? dragCluster : null);
+          if (!targetCluster || targetCluster.size === 0) return;
+          if (isClusterHeldRemotely(targetCluster)) return;
+          const clusterEntries = Array.from(targetCluster)
+            .map((id) => ({ id, piece: pieces.current.get(id) }))
+            .filter((entry): entry is { id: number; piece: PIXI.Container } => Boolean(entry.piece && entry.piece.eventMode !== "none"));
+          if (clusterEntries.length === 0) return;
+          const centers = clusterEntries.map(({ piece }) => ({
+            cx: piece.x + pieceWidth / 2,
+            cy: piece.y + pieceHeight / 2,
+          }));
+          const pivot = centers.reduce(
+            (acc, p) => ({ cx: acc.cx + p.cx, cy: acc.cy + p.cy }),
+            { cx: 0, cy: 0 }
+          );
+          pivot.cx /= centers.length;
+          pivot.cy /= centers.length;
+          const updates: { pieceId: number; x: number; y: number; isLocked?: boolean; rotationQuarter?: number; isBackFace?: boolean }[] = [];
+          const dbUpdates: { piece_index: number; x: number; y: number; is_locked: boolean; rotation_quarter: number; is_back_face: boolean }[] = [];
+          clusterEntries.forEach(({ id, piece }) => {
+            const oldCenterX = piece.x + pieceWidth / 2;
+            const oldCenterY = piece.y + pieceHeight / 2;
+            const dx = oldCenterX - pivot.cx;
+            const dy = oldCenterY - pivot.cy;
+            const newCenterX = pivot.cx - dy;
+            const newCenterY = pivot.cy + dx;
+            piece.x = newCenterX - pieceWidth / 2;
+            piece.y = newCenterY - pieceHeight / 2;
+            const currentQuarter = normalizeRotationQuarter((piece as any).__rotationQuarter ?? 0);
+            const nextQuarter = (currentQuarter + 1) % 4;
+            const nextBack = false;
+            applyPieceOrientationVisual(piece, nextQuarter, nextBack);
+          });
+          // Nightmare: pivot rotation + float math can push neighbors outside getConnectedCluster's <1px check;
+          // re-derive x/y from one anchor so relative offsets match rotateGridDeltaByQuarter (same as BFS).
+          if (isNightmare) {
+            const ids = clusterEntries.map((e) => e.id);
+            const anchorId = Math.min(...ids);
+            const ap = pieces.current.get(anchorId)!;
+            const ac = anchorId % GRID_COLS;
+            const ar = Math.floor(anchorId / GRID_COLS);
+            const q = getPieceQuarter(ap);
+            for (const id of ids) {
+              if (id === anchorId) continue;
+              const p = pieces.current.get(id)!;
+              const c = id % GRID_COLS;
+              const r = Math.floor(id / GRID_COLS);
+              const rot = rotateGridDeltaByQuarter((c - ac) * pieceWidth, (r - ar) * pieceHeight, q);
+              p.x = ap.x + rot.dx;
+              p.y = ap.y + rot.dy;
+            }
+          }
+          clusterEntries.forEach(({ id, piece }) => {
+            const nextQuarter = normalizeRotationQuarter((piece as any).__rotationQuarter ?? 0);
+            const nextBack = false;
+            updates.push({
+              pieceId: id,
+              x: piece.x,
+              y: piece.y,
+              isLocked: false,
+              rotationQuarter: nextQuarter,
+              isBackFace: nextBack,
+            });
+            dbUpdates.push({
+              piece_index: id,
+              x: piece.x,
+              y: piece.y,
+              is_locked: false,
+              rotation_quarter: nextQuarter,
+              is_back_face: nextBack,
+            });
+          });
+          // Grab offsets were captured at pointerdown; after x/y change from rotation they still point at the
+          // old frame, so mouse move uses p_i = L - (L0 - p_old_i) = p_old_i + Δ — wrong p_old after rotate.
+          const grabLocalX = (pointerGlobalPos.x - world.x) / world.scale.x;
+          const grabLocalY = (pointerGlobalPos.y - world.y) / world.scale.y;
+          if (selectedCluster && targetCluster === selectedCluster) {
+            targetCluster.forEach((id) => {
+              const p = pieces.current.get(id);
+              if (p) selectedOffsets.set(id, { x: grabLocalX - p.x, y: grabLocalY - p.y });
+            });
+          }
+          if (isDragging && targetCluster === dragCluster && dragCluster.size > 0) {
+            targetCluster.forEach((id) => {
+              const p = pieces.current.get(id);
+              if (p) dragOffsets.set(id, { x: grabLocalX - p.x, y: grabLocalY - p.y });
+            });
+          }
+          if (updates.length > 0) {
+            if (dbgPiecePersist) {
+              const sk = socketRef.current;
+              console.info("[Puzzlox:persist] rotate cluster (before sendMoveBatch)", {
+                roomId,
+                socketConnected: Boolean(sk?.connected),
+                count: updates.length,
+                orientation: updates.map((o) => ({
+                  id: o.pieceId,
+                  q: o.rotationQuarter,
+                  back: o.isBackFace,
+                })),
+              });
+            }
+            sendMoveBatch(updates);
+            void savePiecesState(dbUpdates);
+          }
+        };
+        rotateFlipSelectionRef.current = rotateFlipSelectedCluster;
 
         const gatherBorders = async () => {
           if (isBotRunningRef.current) {
@@ -3998,21 +4280,73 @@ export default function PuzzleBoard({
         }
         
         initialPositionsRef.current = [...initialPositions];
+        const makeNightmareSpawnPositions = () => {
+          const cx = boardStartX + boardWidth / 2 - pieceWidth / 2;
+          const cy = boardStartY + boardHeight / 2 - pieceHeight / 2;
+          const radius = Math.max(
+            pieceWidth * 1.2,
+            Math.min(boardWidth, boardHeight) * 0.24
+          );
+          const result: { x: number; y: number }[] = [];
+          for (let idx = 0; idx < PIECE_COUNT; idx++) {
+            const angle = Math.random() * Math.PI * 2;
+            const distance = Math.sqrt(Math.random()) * radius;
+            const jitterX = (Math.random() - 0.5) * pieceWidth * 0.16;
+            const jitterY = (Math.random() - 0.5) * pieceHeight * 0.16;
+            const rawX = cx + Math.cos(angle) * distance + jitterX;
+            const rawY = cy + Math.sin(angle) * distance + jitterY;
+            result.push({
+              x: Math.max(boardStartX, Math.min(boardStartX + boardWidth - pieceWidth, rawX)),
+              y: Math.max(boardStartY, Math.min(boardStartY + boardHeight - pieceHeight, rawY)),
+            });
+          }
+          for (let i = result.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [result[i], result[j]] = [result[j], result[i]];
+          }
+          return result;
+        };
+        const makeNightmareOrientation = () => {
+          const rotations: number[] = [];
+          for (let i = 0; i < PIECE_COUNT; i++) rotations.push(i % 4);
+          for (let i = rotations.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [rotations[i], rotations[j]] = [rotations[j], rotations[i]];
+          }
+          const flipped = new Set<number>();
+          const flipCount = Math.floor(PIECE_COUNT * 0.5);
+          const indices = Array.from({ length: PIECE_COUNT }, (_, idx) => idx);
+          for (let i = indices.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [indices[i], indices[j]] = [indices[j], indices[i]];
+          }
+          for (let i = 0; i < flipCount; i++) flipped.add(indices[i]);
+          return { rotations, flipped };
+        };
         
         if (!hasExistingState) {
-          // Shuffle positions
-          for (let i = initialPositions.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [initialPositions[i], initialPositions[j]] = [initialPositions[j], initialPositions[i]];
+          if (isNightmare) {
+            const nightmarePositions = makeNightmareSpawnPositions();
+            initialPositions.splice(0, initialPositions.length, ...nightmarePositions);
+          } else {
+            // Shuffle positions
+            for (let i = initialPositions.length - 1; i > 0; i--) {
+              const j = Math.floor(Math.random() * (i + 1));
+              [initialPositions[i], initialPositions[j]] = [initialPositions[j], initialPositions[i]];
+            }
           }
+          const nightmareOrientation = isNightmare ? makeNightmareOrientation() : null;
           
           const inserts = initialPositions.map((pos, i) => ({
             room_id: roomId,
             piece_index: i,
             x: pos.x,
             y: pos.y,
-            is_locked: false
+            is_locked: false,
+            rotation_quarter: nightmareOrientation ? nightmareOrientation.rotations[i] : 0,
+            is_back_face: nightmareOrientation ? nightmareOrientation.flipped.has(i) : false,
           }));
+          inserts.forEach((row) => pieceStates.set(row.piece_index, row));
           
           for (let i = 0; i < inserts.length; i += 500) {
              const { error } = await supabase.from('pieces').insert(inserts.slice(i, i + 500));
@@ -4048,7 +4382,9 @@ export default function PuzzleBoard({
                 piece_index: index,
                 x: pos.x,
                 y: pos.y,
-                is_locked: false
+                is_locked: false,
+                rotation_quarter: isNightmare ? Math.floor(Math.random() * 4) : 0,
+                is_back_face: isNightmare ? Math.random() < 0.5 : false,
               };
               pieceStates.set(index, state);
               return state;
@@ -4192,8 +4528,20 @@ export default function PuzzleBoard({
             pieceContainer.interactiveChildren = false;
             renderTarget.label = 'pieceSprite';
             renderTarget.eventMode = 'none';
-            pieceContainer.addChild(renderTarget);
-            pieceContainer.addChild(createOwnerOverlay());
+            const pieceVisual = new PIXI.Container();
+            pieceVisual.label = "pieceVisual";
+            pieceVisual.eventMode = "none";
+            const backFaceOverlay = new PIXI.Graphics();
+            applyPieceShape(backFaceOverlay);
+            backFaceOverlay.fill({ color: 0x9ca3af, alpha: 1 });
+            backFaceOverlay.stroke({ color: 0x4b5563, alpha: 0.95, width: 1.4 * canvasOutlineScale });
+            backFaceOverlay.visible = false;
+            backFaceOverlay.label = "backFaceOverlay";
+            backFaceOverlay.eventMode = "none";
+
+            pieceVisual.addChild(renderTarget);
+            pieceVisual.addChild(createOwnerOverlay());
+            pieceVisual.addChild(backFaceOverlay);
 
             lockIconSprite = new PIXI.Sprite(sharedLockTexture!);
             lockIconSprite.anchor.set(0.5);
@@ -4203,6 +4551,7 @@ export default function PuzzleBoard({
             lockIconSprite.visible = false;
             lockIconSprite.label = 'lockIcon';
             lockIconSprite.eventMode = 'none';
+            pieceContainer.addChild(pieceVisual);
             pieceContainer.addChild(lockIconSprite);
           } else {
             const lockBorderColor = isTossMode ? 0x3182f6 : 0x9333ea;
@@ -4258,8 +4607,22 @@ export default function PuzzleBoard({
             lockIconSprite.visible = false;
             lockIconSprite.label = 'lockIcon';
 
-            pieceContainer.addChild(pieceSprite);
-            pieceContainer.addChild(createOwnerOverlay());
+            const pieceVisual = new PIXI.Container();
+            pieceVisual.label = "pieceVisual";
+            pieceVisual.eventMode = "none";
+
+            const backFaceOverlay = new PIXI.Graphics();
+            applyPieceShape(backFaceOverlay);
+            backFaceOverlay.fill({ color: 0x9ca3af, alpha: 1 });
+            backFaceOverlay.stroke({ color: 0x4b5563, alpha: 0.95, width: 1.6 * canvasOutlineScale });
+            backFaceOverlay.visible = false;
+            backFaceOverlay.label = "backFaceOverlay";
+            backFaceOverlay.eventMode = "none";
+
+            pieceVisual.addChild(pieceSprite);
+            pieceVisual.addChild(createOwnerOverlay());
+            pieceVisual.addChild(backFaceOverlay);
+            pieceContainer.addChild(pieceVisual);
             pieceContainer.addChild(lockIconSprite);
 
             if (ENABLE_BEVEL) {
@@ -4271,6 +4634,15 @@ export default function PuzzleBoard({
           }
 
           pieceContainer.hitArea = new PIXI.Rectangle(minX, minY, maxX - minX, maxY - minY);
+          // Keep visual rotation pivot aligned with logical grid center.
+          // This prevents cluster-rotation drift caused by per-piece tab bounds differences.
+          const piecePivotX = pieceWidth / 2;
+          const piecePivotY = pieceHeight / 2;
+          const pieceVisualNode = pieceContainer.getChildByLabel("pieceVisual") as PIXI.Container | null;
+          if (pieceVisualNode) {
+            pieceVisualNode.pivot.set(piecePivotX, piecePivotY);
+            pieceVisualNode.position.set(piecePivotX, piecePivotY);
+          }
 
           (pieceContainer as any).__makeEasterSolidBack = () => {
             const g = new PIXI.Graphics();
@@ -4302,6 +4674,11 @@ export default function PuzzleBoard({
             targetX = pos.x;
             targetY = pos.y;
           }
+          applyPieceOrientationVisual(
+            pieceContainer,
+            isLocked ? 0 : Number(state?.rotation_quarter ?? 0),
+            isLocked ? false : Boolean(state?.is_back_face === true)
+          );
 
           if (isLocked) {
             pieceContainer.x = targetX;
@@ -4830,6 +5207,7 @@ export default function PuzzleBoard({
         };
 
         setPlacedPieces(initialPlacedCount);
+        hintLayer?.setCompletionPercent((initialPlacedCount / Math.max(1, PIECE_COUNT)) * 100);
 
         if (initialPlacedCount === PIECE_COUNT) {
           isCompletedRef.current = true;
@@ -5155,6 +5533,20 @@ export default function PuzzleBoard({
                   return;
                 }
                 targetPositions.set(u.pieceId, { x: u.x, y: u.y });
+                if (puzzleDifficulty === "nightmare") {
+                  const qIn = u.rotationQuarter;
+                  const hasQ = qIn !== undefined && qIn !== null && Number.isFinite(Number(qIn));
+                  const hasFlip = typeof u.isBackFace === "boolean";
+                  if (hasQ || hasFlip) {
+                    applyPieceOrientationVisual(
+                      pieceContainer,
+                      hasQ
+                        ? normalizeRotationQuarter(Number(qIn))
+                        : normalizeRotationQuarter((pieceContainer as any).__rotationQuarter ?? 0),
+                      hasFlip ? u.isBackFace === true : (pieceContainer as any).__isBackFace === true
+                    );
+                  }
+                }
                 // 다른 사용자가 조각을 맞췄을 때 맨 뒤로 보내기
                 const col = u.pieceId % GRID_COLS;
                 const row = Math.floor(u.pieceId / GRID_COLS);
@@ -5163,8 +5555,14 @@ export default function PuzzleBoard({
                 if (typeof u.snappedBy === "string" && u.snappedBy.trim() !== "") {
                   rememberSolvedPieceOwner(u.pieceId, u.snappedBy.trim());
                 }
-                const shouldLock = u.isLocked === true || (Math.abs(u.x - targetX) < 1 && Math.abs(u.y - targetY) < 1);
+                const allowNearTargetFallback = puzzleDifficulty !== "nightmare";
+                const shouldLock =
+                  u.isLocked === true ||
+                  (allowNearTargetFallback && Math.abs(u.x - targetX) < 1 && Math.abs(u.y - targetY) < 1);
                 if (shouldLock) {
+                  if (puzzleDifficulty === "nightmare") {
+                    applyPieceOrientationVisual(pieceContainer, 0, false);
+                  }
                   if (moveUserId) {
                     rememberSolvedPieceOwner(u.pieceId, moveUserId);
                   }
@@ -5597,6 +5995,7 @@ export default function PuzzleBoard({
           gatherBordersRef.current = null;
           gatherByColorRef.current = null;
           createMosaicFromImageRef.current = null;
+          rotateFlipSelectionRef.current = null;
           initialPositionsRef.current = [];
           isCompletedRef.current = false;
           activeUsersRef.current.clear();
@@ -6418,6 +6817,20 @@ export default function PuzzleBoard({
               title={isKo ? "순위표" : "Leaderboard"}
             >
               <Trophy size={14} className={showLeaderboard ? (isTossMode ? 'text-[#2F6FE4]' : 'text-amber-400') : (isTossMode ? 'text-[#2F6FE4]' : 'text-slate-400')} />
+            </button>
+          ) : null}
+
+          {isNightmare ? (
+            <button
+              onClick={() => rotateFlipSelectionRef.current?.()}
+              className={`flex items-center justify-center w-7 h-7 rounded-md transition-colors border shrink-0 ${
+                isTossMode
+                  ? "bg-[#F4F8FF] text-[#2F6FE4] border-none"
+                  : "bg-slate-800/50 hover:bg-slate-700 border-slate-700/50 text-slate-300 hover:text-white"
+              }`}
+              title={isKo ? "선택 조각 회전/앞면화" : "Rotate/flip selected pieces"}
+            >
+              <RotateCcw size={14} />
             </button>
           ) : null}
 

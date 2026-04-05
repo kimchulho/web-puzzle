@@ -31,6 +31,9 @@ import { tossPartnerRequest } from "./tossPartnerClient";
 
 dotenv.config();
 
+/** Set LOG_PIECE_PERSIST=1 to log MoveBatch → DB queue → pieces upsert (rotation / back face). */
+const LOG_PIECE_PERSIST = /^1|true|yes$/i.test(String(process.env.LOG_PIECE_PERSIST ?? "").trim());
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -42,6 +45,8 @@ const supabase = createClient(supabaseUrl, supabaseAnonKey);
 const authSupabase = supabaseServiceRoleKey
   ? createClient(supabaseUrl, supabaseServiceRoleKey)
   : null;
+/** Piece x/y/orientation upserts must bypass RLS; anon often cannot update these rows/columns. */
+const pieceStateSupabase = authSupabase ?? supabase;
 const jwtSecret = process.env.JWT_SECRET || "dev-jwt-secret-change-me";
 
 type AuthProvider = "web_local" | "toss";
@@ -716,11 +721,24 @@ async function startServer() {
     isCompleted: boolean 
   }>();
   const roomPieceLocks = new Map<number, Map<number, { socketId: string; userId: string }>>();
+  /** Last known piece orientation per room for MoveBatch broadcasts (nightmare / rotation sync). */
+  const roomMovePieceOrientation = new Map<
+    number,
+    Map<number, { rotationQuarter: number; isBackFace: boolean }>
+  >();
   const roomScoreCache = new Map<number, Map<string, number>>();
   const PIECE_DB_FLUSH_MS = 1200;
   const roomPieceStatePending = new Map<
     number,
-    Map<number, { piece_index: number; x: number; y: number; is_locked: boolean; snapped_by?: string }>
+    Map<number, {
+      piece_index: number;
+      x: number;
+      y: number;
+      is_locked: boolean;
+      snapped_by?: string;
+      rotation_quarter?: number;
+      is_back_face?: boolean;
+    }>
   >();
   const roomSolvedPieceIds = new Map<number, Set<number>>();
   const roomSolvedPieceOwner = new Map<number, Map<number, string>>();
@@ -807,6 +825,8 @@ async function startServer() {
             y: number;
             is_locked: boolean;
             snapped_by?: string;
+            rotation_quarter?: number;
+            is_back_face?: boolean;
           } = {
             room_id: roomId,
             piece_index: u.piece_index,
@@ -815,15 +835,44 @@ async function startServer() {
             is_locked: u.is_locked,
           };
           if (u.snapped_by) row.snapped_by = u.snapped_by;
+          if (u.is_locked === true) {
+            row.rotation_quarter = 0;
+            row.is_back_face = false;
+          } else {
+            row.rotation_quarter = Math.max(
+              0,
+              Math.min(3, Math.round(Number(u.rotation_quarter ?? 0)))
+            );
+            row.is_back_face = u.is_back_face === true;
+          }
           return row;
         })(),
       }));
-      const { error } = await supabase
+      const { error } = await pieceStateSupabase
         .from("pieces")
         .upsert(payload, { onConflict: "room_id,piece_index" });
       if (error) {
-        console.warn("[piece-state/upsert]", { roomId, message: error.message });
+        console.warn("[piece-state/upsert]", {
+          roomId,
+          message: error.message,
+          usingServiceRole: Boolean(authSupabase),
+          hint: authSupabase
+            ? undefined
+            : "Set SUPABASE_SERVICE_ROLE_KEY on the server so piece orientation can persist under RLS.",
+        });
         for (const u of entries) pending.set(u.piece_index, u);
+      } else if (LOG_PIECE_PERSIST) {
+        const unlocked = payload.filter((r) => r.is_locked !== true);
+        console.info("[piece-state/upsert:ok]", {
+          roomId,
+          rows: payload.length,
+          serviceRole: Boolean(authSupabase),
+          orientationSample: unlocked.slice(0, 16).map((r) => ({
+            i: r.piece_index,
+            q: r.rotation_quarter,
+            back: r.is_back_face,
+          })),
+        });
       }
     } catch (error) {
       console.warn("[piece-state/upsert-exception]", error);
@@ -839,7 +888,15 @@ async function startServer() {
   };
   const enqueueRoomPieceState = (
     roomId: number,
-    updates: { pieceId: number; x: number; y: number; isLocked?: boolean; snappedBy?: string }[],
+    updates: {
+      pieceId: number;
+      x: number;
+      y: number;
+      isLocked?: boolean;
+      snappedBy?: string;
+      rotationQuarter?: number;
+      isBackFace?: boolean;
+    }[],
     userId?: string
   ) => {
     if (!roomPieceStatePending.has(roomId)) roomPieceStatePending.set(roomId, new Map());
@@ -848,6 +905,7 @@ async function startServer() {
     const solved = roomSolvedPieceIds.get(roomId)!;
     if (!roomSolvedPieceOwner.has(roomId)) roomSolvedPieceOwner.set(roomId, new Map());
     const solvedOwner = roomSolvedPieceOwner.get(roomId)!;
+    const orientRoom = roomMovePieceOrientation.get(roomId);
     for (const u of updates) {
       const snappedBy = String(u.snappedBy ?? "").trim();
       if (snappedBy && !solvedOwner.has(u.pieceId)) {
@@ -860,13 +918,43 @@ async function startServer() {
           solvedOwner.set(u.pieceId, owner);
         }
       }
+      const isSolved = solved.has(u.pieceId);
+      const prevPending = pending.get(u.pieceId);
+      const o = orientRoom?.get(u.pieceId);
+      let rotationQuarterDb: number;
+      let isBackFaceDb: boolean;
+      if (isSolved) {
+        rotationQuarterDb = 0;
+        isBackFaceDb = false;
+      } else {
+        if (Number.isFinite(u.rotationQuarter)) {
+          rotationQuarterDb = Math.max(0, Math.min(3, Math.round(Number(u.rotationQuarter))));
+        } else if (prevPending && Number.isFinite(prevPending.rotation_quarter)) {
+          rotationQuarterDb = prevPending.rotation_quarter;
+        } else if (o && Number.isFinite(o.rotationQuarter)) {
+          rotationQuarterDb = o.rotationQuarter;
+        } else {
+          rotationQuarterDb = 0;
+        }
+        if (typeof u.isBackFace === "boolean") {
+          isBackFaceDb = u.isBackFace === true;
+        } else if (prevPending && typeof prevPending.is_back_face === "boolean") {
+          isBackFaceDb = prevPending.is_back_face === true;
+        } else if (o) {
+          isBackFaceDb = o.isBackFace === true;
+        } else {
+          isBackFaceDb = false;
+        }
+      }
       pending.set(u.pieceId, {
         piece_index: u.pieceId,
         x: u.x,
         y: u.y,
         // 한번 잠긴 조각은 다시 false로 내려가지 않게 단조 증가(monotonic) 처리
-        is_locked: solved.has(u.pieceId),
+        is_locked: isSolved,
         snapped_by: solvedOwner.get(u.pieceId),
+        rotation_quarter: rotationQuarterDb,
+        is_back_face: isBackFaceDb,
       });
     }
     scheduleRoomPieceStateFlush(roomId);
@@ -903,7 +991,15 @@ async function startServer() {
     let cursorFlushTimer: ReturnType<typeof setTimeout> | null = null;
     const pendingMoveByPiece = new Map<
       number,
-      { pieceId: number; x: number; y: number; isLocked?: boolean; snappedBy?: string }
+      {
+        pieceId: number;
+        x: number;
+        y: number;
+        isLocked?: boolean;
+        snappedBy?: string;
+        rotationQuarter?: number;
+        isBackFace?: boolean;
+      }
     >();
     let pendingMoveUserId = "guest";
     let pendingMoveSnapped = false;
@@ -912,8 +1008,50 @@ async function startServer() {
       moveFlushTimer = null;
       if (!currentRoomId || pendingMoveByPiece.size === 0) return;
       const roomId = currentRoomId;
-      const updates = [...pendingMoveByPiece.values()];
+      const rawUpdates = [...pendingMoveByPiece.values()];
       pendingMoveByPiece.clear();
+      const orientMap = roomMovePieceOrientation.get(roomId);
+      const updates = rawUpdates.map((u) => {
+        const locked = u.isLocked === true;
+        const o = orientMap?.get(u.pieceId);
+        const base: {
+          pieceId: number;
+          x: number;
+          y: number;
+          isLocked?: boolean;
+          snappedBy?: string;
+          rotationQuarter?: number;
+          isBackFace?: boolean;
+        } = {
+          pieceId: u.pieceId,
+          x: u.x,
+          y: u.y,
+        };
+        if (locked) {
+          base.isLocked = true;
+          base.rotationQuarter = 0;
+          base.isBackFace = false;
+        } else {
+          let rq = 0;
+          let bf = false;
+          if (Number.isFinite(Number(u.rotationQuarter))) {
+            rq = Math.max(0, Math.min(3, Math.round(Number(u.rotationQuarter))));
+          } else if (o) {
+            rq = o.rotationQuarter;
+          }
+          if (typeof u.isBackFace === "boolean") {
+            bf = u.isBackFace === true;
+          } else if (o) {
+            bf = o.isBackFace;
+          }
+          base.rotationQuarter = rq;
+          base.isBackFace = bf;
+        }
+        if (typeof u.snappedBy === "string" && u.snappedBy.trim() !== "") {
+          base.snappedBy = u.snappedBy.trim();
+        }
+        return base;
+      });
       socket.to(roomId.toString()).emit(ROOM_EVENTS.MoveBatch, {
         roomId,
         userId: pendingMoveUserId,
@@ -1202,6 +1340,12 @@ async function startServer() {
       const updatesRaw = Array.isArray(raw?.updates) ? raw.updates : [];
       if (updatesRaw.length === 0) return;
       const snapped = raw?.snapped === true;
+      const parseWireBool = (v: unknown): boolean | undefined => {
+        if (typeof v === "boolean") return v;
+        if (v === "true" || v === 1 || v === "1") return true;
+        if (v === "false" || v === 0 || v === "0" || v === "") return false;
+        return undefined;
+      };
       const updates = updatesRaw
         .slice(0, 120)
         .map((u) => ({
@@ -1213,6 +1357,10 @@ async function startServer() {
             typeof u.snappedBy === "string" && u.snappedBy.trim() !== ""
               ? u.snappedBy.trim()
               : undefined,
+          rotationQuarter: Number.isFinite(Number((u as any).rotationQuarter))
+            ? Math.max(0, Math.min(3, Math.round(Number((u as any).rotationQuarter))))
+            : undefined,
+          isBackFace: parseWireBool((u as any).isBackFace),
         }))
         .filter(
           (u) =>
@@ -1224,8 +1372,66 @@ async function startServer() {
       if (updates.length === 0) return;
       pendingMoveUserId = userId;
       pendingMoveSnapped = pendingMoveSnapped || snapped;
-      for (const u of updates) pendingMoveByPiece.set(u.pieceId, u);
-      enqueueRoomPieceState(roomId, updates, userId);
+      if (!roomMovePieceOrientation.has(roomId)) roomMovePieceOrientation.set(roomId, new Map());
+      const orientMap = roomMovePieceOrientation.get(roomId)!;
+      for (const u of updates) {
+        const prev = pendingMoveByPiece.get(u.pieceId);
+        pendingMoveByPiece.set(u.pieceId, {
+          ...prev,
+          ...u,
+          rotationQuarter:
+            u.rotationQuarter ?? prev?.rotationQuarter,
+          isBackFace:
+            typeof u.isBackFace === "boolean"
+              ? u.isBackFace
+              : prev?.isBackFace,
+        });
+        const merged = pendingMoveByPiece.get(u.pieceId)!;
+        const prevO = orientMap.get(u.pieceId);
+        if (merged.isLocked === true) {
+          orientMap.set(u.pieceId, { rotationQuarter: 0, isBackFace: false });
+        } else {
+          let nextQ = prevO?.rotationQuarter;
+          let nextB = prevO?.isBackFace ?? false;
+          if (Number.isFinite(Number(merged.rotationQuarter))) {
+            nextQ = Math.max(0, Math.min(3, Math.round(Number(merged.rotationQuarter))));
+          }
+          if (typeof merged.isBackFace === "boolean") {
+            nextB = merged.isBackFace;
+          }
+          orientMap.set(u.pieceId, {
+            rotationQuarter: nextQ ?? 0,
+            isBackFace: nextB,
+          });
+        }
+      }
+      // DB queue must match merged orientMap + positions, not the pre-merge wire slice (fixes is_back_face / quarter drops).
+      const persistUpdates = updates.map((u) => {
+        const m = pendingMoveByPiece.get(u.pieceId)!;
+        const o = orientMap.get(u.pieceId)!;
+        return {
+          pieceId: u.pieceId,
+          x: m.x,
+          y: m.y,
+          isLocked: m.isLocked === true,
+          snappedBy: m.snappedBy,
+          rotationQuarter: o.rotationQuarter,
+          isBackFace: o.isBackFace,
+        };
+      });
+      if (LOG_PIECE_PERSIST) {
+        console.info("[MoveBatch→enqueueRoomPieceState]", {
+          roomId,
+          userId,
+          count: persistUpdates.length,
+          orientation: persistUpdates.map((p) => ({
+            id: p.pieceId,
+            q: p.rotationQuarter,
+            back: p.isBackFace,
+          })),
+        });
+      }
+      enqueueRoomPieceState(roomId, persistUpdates, userId);
       scheduleMoveFlush();
     });
 
