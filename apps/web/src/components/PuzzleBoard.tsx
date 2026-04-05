@@ -4671,6 +4671,9 @@ export default function PuzzleBoard({
 
         bumpProgress(50);
 
+        /** 베벨: 씬에 블러 필터를 상주시키지 않음. WebGL 빠른 초기화는 평면 Graphics → 로딩 후 rAF로 텍스처 베이크. */
+        const ENABLE_BEVEL = true;
+
         if (FAST_PIECE_INIT) {
           const lockBorderColorOnce = isTossMode ? 0x3182f6 : 0x9333ea;
           const lockOutlineWOnce = 3.5;
@@ -4766,44 +4769,7 @@ export default function PuzzleBoard({
           pieceGraphics.fill({ texture: texture, matrix: matrix, textureSpace: 'global' });
           pieceGraphics.stroke({ color: 0x000000, alpha: 0.2, width: strokeWidth });
 
-          const ENABLE_BEVEL = true;
-          let renderTarget: PIXI.Container | PIXI.Graphics = pieceGraphics;
-
-          if (ENABLE_BEVEL) {
-            const bevelContainer = new PIXI.Container();
-            bevelContainer.addChild(pieceGraphics);
-
-            const whiteLine = new PIXI.Graphics();
-            applyPieceShape(whiteLine);
-            whiteLine.stroke({ width: 1, color: 0xffffff, alpha: 0.6 });
-            whiteLine.x = 1;
-            whiteLine.y = 1;
-            const blurWhite = new PIXI.BlurFilter();
-            blurWhite.strength = 1;
-            whiteLine.filters = [blurWhite];
-
-            const blackLine = new PIXI.Graphics();
-            applyPieceShape(blackLine);
-            blackLine.stroke({ width: 1, color: 0x000000, alpha: 0.6 });
-            blackLine.x = -1;
-            blackLine.y = -1;
-            const blurBlack = new PIXI.BlurFilter();
-            blurBlack.strength = 1;
-            blackLine.filters = [blurBlack];
-
-            const maskGraphics = new PIXI.Graphics();
-            applyPieceShape(maskGraphics);
-            maskGraphics.fill({ color: 0xffffff });
-
-            bevelContainer.addChild(whiteLine);
-            bevelContainer.addChild(blackLine);
-            bevelContainer.addChild(maskGraphics);
-
-            whiteLine.mask = maskGraphics;
-            blackLine.mask = maskGraphics;
-
-            renderTarget = bevelContainer;
-          }
+          const renderTarget: PIXI.Graphics = pieceGraphics;
 
           const bounds = pieceGraphics.getLocalBounds();
           const minX = bounds.minX !== undefined ? bounds.minX : bounds.x;
@@ -4902,11 +4868,7 @@ export default function PuzzleBoard({
             pieceContainer.addChild(pieceVisual);
             pieceContainer.addChild(lockIconSprite);
 
-            if (ENABLE_BEVEL) {
-              (renderTarget as PIXI.Container).destroy({ children: true });
-            } else {
-              pieceGraphics.destroy();
-            }
+            pieceGraphics.destroy();
             lockIconGraphics.destroy();
           }
 
@@ -5353,11 +5315,13 @@ export default function PuzzleBoard({
         window.addEventListener('devicemotion', deviceMotionHandler);
 
         const upgradeOnePieceDeferredBevel = (pieceId: number) => {
-          if (!isMounted) return;
+          if (!isMounted || !ENABLE_BEVEL) return;
           const pieceContainer = pieces.current.get(pieceId);
           if (!pieceContainer || pieceContainer.destroyed) return;
-          const oldNode = pieceContainer.getChildByLabel('pieceSprite');
+          const oldNode = pieceContainer.getChildByLabel("pieceSprite", true);
           if (!oldNode || !(oldNode instanceof PIXI.Graphics)) return;
+          const spriteParent = oldNode.parent;
+          if (!spriteParent) return;
 
           const col = pieceId % GRID_COLS;
           const row = Math.floor(pieceId / GRID_COLS);
@@ -5381,7 +5345,7 @@ export default function PuzzleBoard({
           matrix.scale(boardWidth / texture.width, boardHeight / texture.height);
           matrix.translate(-col * pieceWidth, -row * pieceHeight);
           pieceGraphics.fill({ texture: texture, matrix: matrix, textureSpace: 'global' });
-          pieceGraphics.stroke({ color: 0x000000, alpha: 0.2, width: 1 });
+          pieceGraphics.stroke({ color: 0x000000, alpha: 0.2, width: 1 * canvasOutlineScale });
 
           const bevelContainer = new PIXI.Container();
           bevelContainer.addChild(pieceGraphics);
@@ -5455,9 +5419,10 @@ export default function PuzzleBoard({
 
           bevelContainer.destroy({ children: true });
 
-          pieceContainer.removeChild(oldNode);
-          oldNode.destroy();
-          pieceContainer.addChildAt(pieceSprite, 0);
+          const at = spriteParent.getChildIndex(oldNode);
+          spriteParent.removeChild(oldNode);
+          oldNode.destroy({ children: true });
+          spriteParent.addChildAt(pieceSprite, at);
         };
 
         const scheduleDeferredBevelUpgrades = () => {
@@ -5505,7 +5470,7 @@ export default function PuzzleBoard({
         bumpProgress(100);
         setIsLoading(false);
 
-        if (deferBevelUpgrade) {
+        if (deferBevelUpgrade && ENABLE_BEVEL) {
           requestAnimationFrame(() => {
             if (isMounted) scheduleDeferredBevelUpgrades();
           });
