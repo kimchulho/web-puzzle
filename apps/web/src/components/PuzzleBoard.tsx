@@ -2404,7 +2404,7 @@ export default function PuzzleBoard({
         };
 
         const tickNightmareFloatingRotateHud = () => {
-          /** 미니 패드 원형 회전: rotateFlipSelectedCluster 와 동일 조건(선택/드래그 클러스터·잠금·원격 점유) */
+          /** 미니 패드 회전: **선택된** 클러스터만 (일반 드래그 중 dragCluster 는 비활성 — 플로팅/키보드 회전은 기존처럼 드래그에도 허용) */
           if (!isNightmareRef.current) {
             if (lastNightmareMiniPadRotateAllowed) {
               lastNightmareMiniPadRotateAllowed = false;
@@ -2414,11 +2414,7 @@ export default function PuzzleBoard({
             return;
           }
           const targetClusterForRotate =
-            selectedCluster && selectedCluster.size > 0
-              ? selectedCluster
-              : isDragging && dragCluster.size > 0
-                ? dragCluster
-                : null;
+            selectedCluster && selectedCluster.size > 0 ? selectedCluster : null;
           let rotateAllowed = false;
           if (
             targetClusterForRotate &&
@@ -7621,7 +7617,11 @@ export default function PuzzleBoard({
               : undefined
           }
         >
-        <div className="flex items-center gap-2">
+        <div
+          className={`flex flex-col gap-2 ${
+            isTossMode && isTossWideMode ? "items-end" : "items-start"
+          }`}
+        >
           {isNightmare ? (
             <button
               type="button"
