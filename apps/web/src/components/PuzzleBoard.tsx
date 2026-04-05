@@ -273,6 +273,7 @@ export default function PuzzleBoard({
   } | null>(null);
   const setNightmareFloatingRotatePosRef = useRef(setNightmareFloatingRotatePos);
   setNightmareFloatingRotatePosRef.current = setNightmareFloatingRotatePos;
+  const nightmareFloatRotateBtnRef = useRef<HTMLButtonElement | null>(null);
   const isNightmareRef = useRef(isNightmare);
   isNightmareRef.current = isNightmare;
   const isSmartphoneUiRef = useRef(false);
@@ -425,6 +426,20 @@ export default function PuzzleBoard({
       window.removeEventListener("orientationchange", apply);
     };
   }, []);
+
+  /** 악몽 플로팅 회전 버튼: 세로 스와이프가 페이지 당김/새로고침으로 이어지지 않도록 (touchstart는 막지 않아 탭·클릭 유지) */
+  useEffect(() => {
+    if (!isNightmare || !nightmareFloatingRotateTouchLayout) return;
+    const el = nightmareFloatRotateBtnRef.current;
+    if (!el) return;
+    const preventOverscrollGesture = (e: TouchEvent) => {
+      e.preventDefault();
+    };
+    el.addEventListener("touchmove", preventOverscrollGesture, { passive: false });
+    return () => {
+      el.removeEventListener("touchmove", preventOverscrollGesture);
+    };
+  }, [isNightmare, nightmareFloatingRotateTouchLayout, nightmareFloatingRotatePos]);
 
   useEffect(() => {
     showPieceOwnerOverlayRef.current = showPieceOwnerOverlay;
@@ -2342,25 +2357,42 @@ export default function PuzzleBoard({
             return;
           }
           let minX = Infinity;
-          let minY = Infinity;
           let maxX = -Infinity;
-          let maxY = -Infinity;
+          let maxYBottom = -Infinity;
           let any = false;
           selectedCluster.forEach((id) => {
             const p = pieces.current.get(id);
             if (!p?.visible) return;
-            const visual = p.getChildByLabel("pieceVisual") as PIXI.Container | null;
+            const visual = p.getChildByLabel("pieceVisual", true) as PIXI.Container | null;
             if (!visual || visual.visible === false) return;
-            const b = visual.getBounds();
-            const bw = b.width;
-            const bh = b.height;
+            const bFull = visual.getBounds();
+            const bw = bFull.width;
+            const bh = bFull.height;
             if (!Number.isFinite(bw) || !Number.isFinite(bh)) return;
             if (bw <= 0 && bh <= 0) return;
             any = true;
-            minX = Math.min(minX, b.minX);
-            minY = Math.min(minY, b.minY);
-            maxX = Math.max(maxX, b.maxX);
-            maxY = Math.max(maxY, b.maxY);
+            minX = Math.min(minX, bFull.minX);
+            maxX = Math.max(maxX, bFull.maxX);
+            /** 앞면: 베이크 텍스처 패딩·베벨로 visual 하단이 길어짐. 뒷면: 윤곽만이라 짧음 → HUD 거리가 달라 보임. 하단은 항상 backFaceOverlay 기하(퍼즐 실루엣) 기준으로 통일 */
+            let bottomWorld = bFull.maxY;
+            const backOl = visual.getChildByLabel("backFaceOverlay") as PIXI.Container | null;
+            if (backOl) {
+              const prevVis = backOl.visible;
+              const prevAlpha = backOl.alpha;
+              backOl.visible = true;
+              backOl.alpha = 0.001;
+              const bTight = backOl.getBounds();
+              backOl.visible = prevVis;
+              backOl.alpha = prevAlpha;
+              if (
+                bTight.width > 0.5 &&
+                bTight.height > 0.5 &&
+                Number.isFinite(bTight.maxY)
+              ) {
+                bottomWorld = bTight.maxY;
+              }
+            }
+            maxYBottom = Math.max(maxYBottom, bottomWorld);
           });
           if (!any || minX === Infinity) {
             pushNightmareFloatingHud(null);
@@ -2369,7 +2401,7 @@ export default function PuzzleBoard({
           const scaleX = rect.width / screenW;
           const scaleY = rect.height / screenH;
           const centerXCss = rect.left + ((minX + maxX) / 2) * scaleX;
-          const bottomCss = rect.top + maxY * scaleY;
+          const bottomCss = rect.top + maxYBottom * scaleY;
           const btn = NIGHTMARE_FLOAT_ROTATE_BTN_PX;
           const margin = 8;
           let left = centerXCss;
@@ -6424,13 +6456,14 @@ export default function PuzzleBoard({
       isNightmare &&
       nightmareFloatingRotateTouchLayout ? (
         <button
+          ref={nightmareFloatRotateBtnRef}
           type="button"
           onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => {
             e.stopPropagation();
             rotateFlipSelectionRef.current?.();
           }}
-          className={`fixed flex items-center justify-center rounded-full shadow-lg border touch-manipulation select-none ${
+          className={`fixed flex items-center justify-center rounded-full shadow-lg border touch-none select-none ${
             isTossMode
               ? "bg-white border-[#BBD5FF] text-[#2F6FE4] shadow-[0_4px_14px_rgba(47,111,228,0.25)] active:bg-[#EAF2FF]"
               : "bg-slate-800/95 border-slate-600 text-slate-100 shadow-black/40 active:bg-slate-700"
@@ -6447,7 +6480,8 @@ export default function PuzzleBoard({
             transform: "translate(-50%, 0)",
             zIndex: 60,
             boxSizing: "border-box",
-            touchAction: "manipulation",
+            touchAction: "none",
+            overscrollBehavior: "none",
           }}
           title={isKo ? "선택 조각 회전/앞면화" : "Rotate/flip selected pieces"}
           aria-label={isKo ? "선택 조각 회전" : "Rotate selected pieces"}
