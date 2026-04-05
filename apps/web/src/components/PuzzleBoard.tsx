@@ -3222,6 +3222,68 @@ export default function PuzzleBoard({
           selectedCluster = null;
           isDraggingSelected = false;
         };
+
+        const nightmareFlipMotionReduced =
+          typeof window !== "undefined" &&
+          typeof window.matchMedia === "function" &&
+          window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+        const animateNightmareClusterFlipToFront = (
+          entries: { id: number; piece: PIXI.Container }[],
+          onDone: () => void,
+        ) => {
+          if (entries.length === 0) {
+            onDone();
+            return;
+          }
+          if (nightmareFlipMotionReduced) {
+            for (const { piece } of entries) {
+              const q = normalizeRotationQuarter((piece as any).__rotationQuarter ?? 0);
+              applyPieceOrientationVisual(piece, q, false);
+            }
+            onDone();
+            return;
+          }
+          const visuals = entries.map(({ piece }) => {
+            const visual = piece.getChildByLabel("pieceVisual") as PIXI.Container | null;
+            if (visual) visual.scale.set(1, 1);
+            return visual;
+          });
+          let appliedMid = false;
+          const start = performance.now();
+          const durationMs = 220;
+          const tick = () => {
+            if (!isMounted) {
+              try {
+                app.ticker.remove(tick);
+              } catch {
+                /* noop */
+              }
+              return;
+            }
+            const u = Math.min(1, (performance.now() - start) / durationMs);
+            const sx = u < 0.5 ? Math.max(0.02, 1 - u * 2) : Math.max(0.02, (u - 0.5) * 2);
+            for (const v of visuals) {
+              if (v) v.scale.x = sx;
+            }
+            if (u >= 0.5 && !appliedMid) {
+              appliedMid = true;
+              for (const { piece } of entries) {
+                const q = normalizeRotationQuarter((piece as any).__rotationQuarter ?? 0);
+                applyPieceOrientationVisual(piece, q, false);
+              }
+            }
+            if (u >= 1) {
+              for (const v of visuals) {
+                if (v) v.scale.x = 1;
+              }
+              app.ticker.remove(tick);
+              onDone();
+            }
+          };
+          app.ticker.add(tick);
+        };
+
         const rotateFlipSelectedCluster = () => {
           const targetCluster = selectedCluster && selectedCluster.size > 0
             ? selectedCluster
@@ -3232,6 +3294,72 @@ export default function PuzzleBoard({
             .map((id) => ({ id, piece: pieces.current.get(id) }))
             .filter((entry): entry is { id: number; piece: PIXI.Container } => Boolean(entry.piece && entry.piece.eventMode !== "none"));
           if (clusterEntries.length === 0) return;
+
+          const refreshGrabOffsetsAfterClusterTransform = () => {
+            const grabLocalX = (pointerGlobalPos.x - world.x) / world.scale.x;
+            const grabLocalY = (pointerGlobalPos.y - world.y) / world.scale.y;
+            if (selectedCluster && targetCluster === selectedCluster) {
+              targetCluster.forEach((id) => {
+                const p = pieces.current.get(id);
+                if (p) selectedOffsets.set(id, { x: grabLocalX - p.x, y: grabLocalY - p.y });
+              });
+            }
+            if (isDragging && targetCluster === dragCluster && dragCluster.size > 0) {
+              targetCluster.forEach((id) => {
+                const p = pieces.current.get(id);
+                if (p) dragOffsets.set(id, { x: grabLocalX - p.x, y: grabLocalY - p.y });
+              });
+            }
+          };
+
+          if (
+            isNightmare &&
+            clusterEntries.every(({ piece }) => (piece as any).__isBackFace === true)
+          ) {
+            const updates = clusterEntries.map(({ id, piece }) => ({
+              pieceId: id,
+              x: piece.x,
+              y: piece.y,
+              isLocked: false,
+              rotationQuarter: normalizeRotationQuarter((piece as any).__rotationQuarter ?? 0),
+              isBackFace: false,
+            }));
+            const dbUpdates = clusterEntries.map(({ id, piece }) => ({
+              piece_index: id,
+              x: piece.x,
+              y: piece.y,
+              is_locked: false,
+              rotation_quarter: normalizeRotationQuarter((piece as any).__rotationQuarter ?? 0),
+              is_back_face: false,
+            }));
+            animateNightmareClusterFlipToFront(clusterEntries, () => {
+              refreshGrabOffsetsAfterClusterTransform();
+              if (updates.length > 0) {
+                if (dbgPiecePersist) {
+                  const sk = socketRef.current;
+                  console.info(
+                    `[Puzzlox:persist] nightmare flip cluster room=${roomId} socket=${Boolean(sk?.connected)} ` +
+                      `orientation: ${dbgFormatOrientation(updates)}`
+                  );
+                  console.info("[Puzzlox:persist] nightmare flip cluster (before sendMoveBatch) detail", {
+                    roomId,
+                    socketConnected: Boolean(sk?.connected),
+                    count: updates.length,
+                    orientation: updates.map((o) => ({
+                      id: o.pieceId,
+                      quarter: o.rotationQuarter,
+                      deg: (o.rotationQuarter ?? 0) * 90,
+                      face: o.isBackFace ? "back" : "front",
+                    })),
+                  });
+                }
+                sendMoveBatch(updates);
+                void savePiecesState(dbUpdates);
+              }
+            });
+            return;
+          }
+
           const centers = clusterEntries.map(({ piece }) => ({
             cx: piece.x + pieceWidth / 2,
             cy: piece.y + pieceHeight / 2,
@@ -3245,6 +3373,8 @@ export default function PuzzleBoard({
           const updates: { pieceId: number; x: number; y: number; isLocked?: boolean; rotationQuarter?: number; isBackFace?: boolean }[] = [];
           const dbUpdates: { piece_index: number; x: number; y: number; is_locked: boolean; rotation_quarter: number; is_back_face: boolean }[] = [];
           clusterEntries.forEach(({ id, piece }) => {
+            const pv = piece.getChildByLabel("pieceVisual") as PIXI.Container | null;
+            if (pv) pv.scale.set(1, 1);
             const oldCenterX = piece.x + pieceWidth / 2;
             const oldCenterY = piece.y + pieceHeight / 2;
             const dx = oldCenterX - pivot.cx;
@@ -3299,20 +3429,7 @@ export default function PuzzleBoard({
           });
           // Grab offsets were captured at pointerdown; after x/y change from rotation they still point at the
           // old frame, so mouse move uses p_i = L - (L0 - p_old_i) = p_old_i + Δ — wrong p_old after rotate.
-          const grabLocalX = (pointerGlobalPos.x - world.x) / world.scale.x;
-          const grabLocalY = (pointerGlobalPos.y - world.y) / world.scale.y;
-          if (selectedCluster && targetCluster === selectedCluster) {
-            targetCluster.forEach((id) => {
-              const p = pieces.current.get(id);
-              if (p) selectedOffsets.set(id, { x: grabLocalX - p.x, y: grabLocalY - p.y });
-            });
-          }
-          if (isDragging && targetCluster === dragCluster && dragCluster.size > 0) {
-            targetCluster.forEach((id) => {
-              const p = pieces.current.get(id);
-              if (p) dragOffsets.set(id, { x: grabLocalX - p.x, y: grabLocalY - p.y });
-            });
-          }
+          refreshGrabOffsetsAfterClusterTransform();
           if (updates.length > 0) {
             if (dbgPiecePersist) {
               const sk = socketRef.current;
@@ -4618,6 +4735,25 @@ export default function PuzzleBoard({
             return overlay;
           };
 
+          /** 악몽 뒷면: 앞면과 동일 윤곽, 셀 중심 기준 좌우 반전(첫 뒤집기가 가로 카드 플립과 맞물리도록) */
+          const createBackFaceOverlay = (backStrokeW: number) => {
+            const backWrap = new PIXI.Container();
+            backWrap.label = "backFaceOverlay";
+            backWrap.eventMode = "none";
+            backWrap.visible = false;
+            const g = new PIXI.Graphics();
+            applyPieceShape(g);
+            g.fill({ color: 0x9ca3af, alpha: 1 });
+            g.stroke({ color: 0x4b5563, alpha: 0.95, width: backStrokeW });
+            backWrap.addChild(g);
+            const cx = pieceWidth / 2;
+            const cy = pieceHeight / 2;
+            backWrap.pivot.set(cx, cy);
+            backWrap.position.set(cx, cy);
+            backWrap.scale.x = -1;
+            return backWrap;
+          };
+
           const pieceGraphics = new PIXI.Graphics();
           applyPieceShape(pieceGraphics);
 
@@ -4684,13 +4820,7 @@ export default function PuzzleBoard({
             const pieceVisual = new PIXI.Container();
             pieceVisual.label = "pieceVisual";
             pieceVisual.eventMode = "none";
-            const backFaceOverlay = new PIXI.Graphics();
-            applyPieceShape(backFaceOverlay);
-            backFaceOverlay.fill({ color: 0x9ca3af, alpha: 1 });
-            backFaceOverlay.stroke({ color: 0x4b5563, alpha: 0.95, width: 1.4 * canvasOutlineScale });
-            backFaceOverlay.visible = false;
-            backFaceOverlay.label = "backFaceOverlay";
-            backFaceOverlay.eventMode = "none";
+            const backFaceOverlay = createBackFaceOverlay(1.4 * canvasOutlineScale);
 
             pieceVisual.addChild(renderTarget);
             pieceVisual.addChild(createOwnerOverlay());
@@ -4764,13 +4894,7 @@ export default function PuzzleBoard({
             pieceVisual.label = "pieceVisual";
             pieceVisual.eventMode = "none";
 
-            const backFaceOverlay = new PIXI.Graphics();
-            applyPieceShape(backFaceOverlay);
-            backFaceOverlay.fill({ color: 0x9ca3af, alpha: 1 });
-            backFaceOverlay.stroke({ color: 0x4b5563, alpha: 0.95, width: 1.6 * canvasOutlineScale });
-            backFaceOverlay.visible = false;
-            backFaceOverlay.label = "backFaceOverlay";
-            backFaceOverlay.eventMode = "none";
+            const backFaceOverlay = createBackFaceOverlay(1.6 * canvasOutlineScale);
 
             pieceVisual.addChild(pieceSprite);
             pieceVisual.addChild(createOwnerOverlay());
