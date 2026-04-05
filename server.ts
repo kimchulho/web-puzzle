@@ -67,6 +67,33 @@ function encodeRoomCodeForApi(id: number): string {
   return str;
 }
 
+/** Per-room locked piece counts and row totals for dashboard/profile progress (single batched query). */
+async function loadPieceProgressMaps(
+  client: ReturnType<typeof createClient>,
+  roomIds: number[]
+): Promise<{ lockedByRoom: Map<number, number>; rowsByRoom: Map<number, number> } | null> {
+  const lockedByRoom = new Map<number, number>();
+  const rowsByRoom = new Map<number, number>();
+  if (roomIds.length === 0) return { lockedByRoom, rowsByRoom };
+  const { data: pieceRows, error } = await client
+    .from("pieces")
+    .select("room_id, is_locked")
+    .in("room_id", roomIds);
+  if (error) {
+    console.warn("[piece-progress]", error.message);
+    return null;
+  }
+  for (const row of pieceRows ?? []) {
+    const rid = Number((row as { room_id?: unknown }).room_id);
+    if (!Number.isFinite(rid) || rid <= 0) continue;
+    rowsByRoom.set(rid, (rowsByRoom.get(rid) ?? 0) + 1);
+    if ((row as { is_locked?: unknown }).is_locked === true) {
+      lockedByRoom.set(rid, (lockedByRoom.get(rid) ?? 0) + 1);
+    }
+  }
+  return { lockedByRoom, rowsByRoom };
+}
+
 type AuthProvider = "web_local" | "toss";
 
 interface JwtPayload {
@@ -185,6 +212,7 @@ async function startServer() {
         role: normalizedUsername === "admin" ? "admin" : "user",
         completed_puzzles: 0,
         placed_pieces: 0,
+        profile_public: true,
       })
       .select("id, username, role, completed_puzzles, placed_pieces, profile_public, created_at, last_active_at")
       .single();
@@ -422,6 +450,7 @@ async function startServer() {
           role: "user",
           completed_puzzles: 0,
           placed_pieces: 0,
+          profile_public: true,
         })
         .select("id")
         .single();
@@ -599,6 +628,11 @@ async function startServer() {
       if (Number.isFinite(rid) && rid > 0) scoreByRoom.set(rid, sc);
     }
 
+    const roomIdsForProgress = [...roomIdSet];
+    const pieceMaps = await loadPieceProgressMaps(authSupabase, roomIdsForProgress);
+    const lockedByRoom = pieceMaps?.lockedByRoom ?? new Map<number, number>();
+    const pieceRowsByRoom = pieceMaps?.rowsByRoom ?? new Map<number, number>();
+
     let participatedRooms: Array<Record<string, unknown>> = [];
     if (roomIdSet.size > 0) {
       const { data: rooms, error: roomsErr } = await authSupabase
@@ -614,13 +648,27 @@ async function startServer() {
         const rid = Number(room.id);
         const createdBy = room.created_by != null ? Number(room.created_by) : NaN;
         const iAmCreator = Number.isFinite(createdBy) && createdBy === userId;
+        const pieceCountDb = Number(room.piece_count ?? 0);
+        const rowTotal = pieceRowsByRoom.get(rid) ?? 0;
+        const totalPieces = Math.max(pieceCountDb, rowTotal);
+        const lockedPieces = lockedByRoom.get(rid) ?? 0;
+        const progressPercent =
+          totalPieces > 0 ? Math.min(100, Math.round((lockedPieces / totalPieces) * 100)) : 0;
+        const statusStr = String(room.status ?? "");
+        const isCompleted =
+          statusStr === "completed" || (totalPieces > 0 && lockedPieces >= totalPieces);
         return {
           roomId: rid,
           roomCode: encodeRoomCodeForApi(rid),
           imageUrl: (room.image_url as string) ?? null,
           difficulty: (room.difficulty as string) ?? null,
           status: (room.status as string) ?? null,
-          pieceCount: Number(room.piece_count ?? 0),
+          pieceCount: pieceCountDb,
+          totalPieces,
+          lockedPieces,
+          progressPercent,
+          isCompleted,
+          completedAt: (room.completed_at as string) ?? null,
           creatorName: (room.creator_name as string) ?? null,
           lastVisitedAt: visitByRoom.get(rid) ?? null,
           scoreInRoom: scoreByRoom.get(rid) ?? 0,
@@ -725,6 +773,11 @@ async function startServer() {
       if (Number.isFinite(rid) && rid > 0) scoreByRoom.set(rid, sc);
     }
 
+    const profileRoomIds = [...roomIdSet];
+    const profilePieceMaps = await loadPieceProgressMaps(authSupabase, profileRoomIds);
+    const profileLockedByRoom = profilePieceMaps?.lockedByRoom ?? new Map<number, number>();
+    const profilePieceRowsByRoom = profilePieceMaps?.rowsByRoom ?? new Map<number, number>();
+
     let participatedRooms: Array<Record<string, unknown>> = [];
     if (roomIdSet.size > 0) {
       const { data: rooms, error: roomsErr } = await authSupabase
@@ -740,6 +793,15 @@ async function startServer() {
         const rid = Number(room.id);
         const createdBy = room.created_by != null ? Number(room.created_by) : NaN;
         const subjectCreatedThis = Number.isFinite(createdBy) && createdBy === subjectId;
+        const pieceCountDb = Number(room.piece_count ?? 0);
+        const rowTotal = profilePieceRowsByRoom.get(rid) ?? 0;
+        const totalPieces = Math.max(pieceCountDb, rowTotal);
+        const lockedPieces = profileLockedByRoom.get(rid) ?? 0;
+        const progressPercent =
+          totalPieces > 0 ? Math.min(100, Math.round((lockedPieces / totalPieces) * 100)) : 0;
+        const statusStr = String(room.status ?? "");
+        const isCompleted =
+          statusStr === "completed" || (totalPieces > 0 && lockedPieces >= totalPieces);
         return {
           roomId: rid,
           roomCode: encodeRoomCodeForApi(rid),
@@ -747,7 +809,12 @@ async function startServer() {
           imageHiddenReason: subjectCreatedThis ? ("creator_private" as const) : null,
           difficulty: (room.difficulty as string) ?? null,
           status: (room.status as string) ?? null,
-          pieceCount: Number(room.piece_count ?? 0),
+          pieceCount: pieceCountDb,
+          totalPieces,
+          lockedPieces,
+          progressPercent,
+          isCompleted,
+          completedAt: (room.completed_at as string) ?? null,
           creatorName: (room.creator_name as string) ?? null,
           lastVisitedAt: visitByRoom.get(rid) ?? null,
           scoreInRoom: scoreByRoom.get(rid) ?? 0,
@@ -762,27 +829,6 @@ async function startServer() {
       });
     }
 
-    const { data: createdMeta, error: cmErr } = await authSupabase
-      .from("rooms")
-      .select("id, piece_count, difficulty, status, created_at, completed_at")
-      .eq("created_by", subjectId)
-      .order("created_at", { ascending: false })
-      .limit(80);
-
-    if (cmErr) {
-      return res.status(500).json({ message: cmErr.message });
-    }
-
-    const createdRooms = (createdMeta ?? []).map((room: Record<string, unknown>) => ({
-      roomId: Number(room.id),
-      roomCode: encodeRoomCodeForApi(Number(room.id)),
-      difficulty: (room.difficulty as string) ?? null,
-      status: (room.status as string) ?? null,
-      pieceCount: Number(room.piece_count ?? 0),
-      createdAt: (room.created_at as string) ?? null,
-      completedAt: (room.completed_at as string) ?? null,
-    }));
-
     return res.json({
       user: {
         username: subject.username,
@@ -790,7 +836,6 @@ async function startServer() {
         placed_pieces: subject.placed_pieces,
       },
       participatedRooms,
-      createdRooms,
     });
   });
 

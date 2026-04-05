@@ -4,7 +4,7 @@ export interface AuthUser {
   role: string;
   completed_puzzles: number;
   placed_pieces: number;
-  /** When true, `GET /api/profile/:username` exposes stats & rooms (uploaded images never exposed). */
+  /** Default true: `GET /api/profile/:username` works; set false for private. Uploaded room images stay private. */
   profile_public?: boolean;
   created_at: string;
   last_active_at: string | null;

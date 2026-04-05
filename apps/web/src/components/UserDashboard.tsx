@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import {
   ArrowLeft,
+  CheckCircle,
   Copy,
   Filter,
   Grid,
@@ -35,6 +36,11 @@ type RoomRow = {
   difficulty: string | null;
   status: string | null;
   pieceCount: number;
+  totalPieces?: number;
+  lockedPieces?: number;
+  progressPercent?: number;
+  isCompleted?: boolean;
+  completedAt?: string | null;
   creatorName?: string | null;
   lastVisitedAt?: string | null;
   scoreInRoom?: number;
@@ -76,7 +82,6 @@ export default function UserDashboard({
   const [dashUser, setDashUser] = useState<DashboardUser | null>(null);
   const [participated, setParticipated] = useState<RoomRow[]>([]);
   const [myUploads, setMyUploads] = useState<UploadRow[]>([]);
-  const [createdOnly, setCreatedOnly] = useState<Omit<UploadRow, "imageUrl">[]>([]);
   const [profileSaving, setProfileSaving] = useState(false);
   const [copyOk, setCopyOk] = useState(false);
   /** 참여 목록에서 내가 만든 방 제외 */
@@ -110,7 +115,6 @@ export default function UserDashboard({
         setDashUser(j.user ?? null);
         setParticipated(Array.isArray(j.participatedRooms) ? j.participatedRooms : []);
         setMyUploads(Array.isArray(j.myUploads) ? j.myUploads : []);
-        setCreatedOnly([]);
       } else {
         const u = (publicUsername ?? "").trim().toLowerCase();
         if (!u) {
@@ -123,7 +127,6 @@ export default function UserDashboard({
           message?: string;
           user?: { username: string; completed_puzzles?: number; placed_pieces?: number };
           participatedRooms?: RoomRow[];
-          createdRooms?: Omit<UploadRow, "imageUrl">[];
         };
         if (!res.ok) {
           setError(j?.message || (isKo ? "비공개이거나 없는 프로필입니다." : "Profile is private or not found."));
@@ -141,7 +144,6 @@ export default function UserDashboard({
         );
         setParticipated(Array.isArray(j.participatedRooms) ? j.participatedRooms : []);
         setMyUploads([]);
-        setCreatedOnly(Array.isArray(j.createdRooms) ? j.createdRooms : []);
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -277,23 +279,25 @@ export default function UserDashboard({
                       <p className="font-semibold text-white">{isKo ? "프로필 공개" : "Public profile"}</p>
                       <p className="mt-1 text-sm text-slate-400">
                         {isKo
-                          ? "켜면 통계·참여 방 목록이 /u/아이디 로 열립니다. 내가 올린 퍼즐 이미지는 항상 비공개입니다."
-                          : "When on, stats and room history are visible at /u/username. Images you uploaded as room photos stay private."}
+                          ? "기본은 공개입니다. 체크를 해제하면 비공개로 전환됩니다. 공개 시 /u/아이디 에 통계·참여 방이 보이며, 직접 업로드한 퍼즐 이미지는 항상 비공개입니다."
+                          : "Public by default; uncheck to make your profile private. When public, stats and joined rooms appear at /u/username; images you uploaded as room photos stay private."}
                       </p>
                     </div>
                   </div>
                   <label className="flex cursor-pointer items-center gap-2 self-start sm:self-center">
-                    <span className="text-sm text-slate-400">{isKo ? "공개" : "On"}</span>
                     <input
                       type="checkbox"
                       className="h-5 w-5 rounded border-slate-600 bg-slate-800 text-indigo-500 focus:ring-indigo-500"
-                      checked={Boolean(dashUser?.profile_public)}
+                      checked={dashUser?.profile_public !== false}
                       disabled={profileSaving}
                       onChange={(e) => void toggleProfilePublic(e.target.checked)}
                     />
+                    <span className="text-sm text-slate-300">
+                      {isKo ? "프로필 공개" : "Profile public"}
+                    </span>
                   </label>
                 </div>
-                {dashUser?.profile_public ? (
+                {dashUser?.profile_public !== false ? (
                   <div className="mt-4 flex flex-wrap gap-2 border-t border-slate-800 pt-4">
                     <button
                       type="button"
@@ -375,37 +379,6 @@ export default function UserDashboard({
               </section>
             ) : null}
 
-            {mode === "public" && createdOnly.length > 0 ? (
-              <section>
-                <h2 className="mb-3 flex items-center gap-2 text-base font-bold text-white">
-                  <Lock size={18} className="text-slate-400" />
-                  {isKo ? "만든 방 (이미지 비공개)" : "Created rooms (images private)"}
-                </h2>
-                <ul className="space-y-2">
-                  {createdOnly.map((r) => (
-                    <li
-                      key={r.roomId}
-                      className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-800 bg-slate-900/60 px-3 py-3"
-                    >
-                      <div>
-                        <p className="font-mono text-sm text-indigo-300">#{r.roomCode}</p>
-                        <p className="text-xs text-slate-400">
-                          {puzzleDifficultyLabel(normalizePuzzleDifficulty(r.difficulty), isKo)} · {r.status}
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => void enterRoom(r.roomId)}
-                        className="rounded-lg border border-slate-600 px-3 py-1.5 text-sm hover:bg-slate-800"
-                      >
-                        {isKo ? "입장" : "Enter"}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            ) : null}
-
             <section>
               <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <h2 className="flex items-center gap-2 text-base font-bold text-white">
@@ -435,7 +408,24 @@ export default function UserDashboard({
                 </p>
               ) : (
                 <ul className="space-y-3">
-                  {participatedFiltered.map((r) => (
+                  {participatedFiltered.map((r) => {
+                    const displayTotal =
+                      typeof r.totalPieces === "number" && r.totalPieces > 0
+                        ? r.totalPieces
+                        : Math.max(0, r.pieceCount);
+                    const displayLocked = Math.max(0, r.lockedPieces ?? 0);
+                    const pctRaw =
+                      typeof r.progressPercent === "number"
+                        ? r.progressPercent
+                        : displayTotal > 0
+                          ? Math.min(100, Math.round((displayLocked / displayTotal) * 100))
+                          : 0;
+                    const done =
+                      r.isCompleted === true ||
+                      r.status === "completed" ||
+                      (displayTotal > 0 && displayLocked >= displayTotal);
+                    const barPct = done ? 100 : pctRaw;
+                    return (
                     <li
                       key={r.roomId}
                       className="flex gap-3 rounded-2xl border border-slate-800 bg-slate-900/60 p-3"
@@ -469,6 +459,41 @@ export default function UserDashboard({
                             </span>
                           ) : null}
                         </p>
+                        {displayTotal > 0 ? (
+                          <div className="mt-2 space-y-1">
+                            <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-400">
+                              <span>
+                                {isKo ? "진행" : "Progress"}: {displayLocked}/{displayTotal}{" "}
+                                {isKo ? "조각" : "pcs"}
+                                <span className="text-slate-500">
+                                  {" "}
+                                  ({done ? 100 : pctRaw}%)
+                                </span>
+                              </span>
+                              {done ? (
+                                <span className="inline-flex shrink-0 items-center gap-0.5 rounded-md bg-emerald-500/20 px-1.5 py-0.5 font-medium text-emerald-300">
+                                  <CheckCircle size={12} className="shrink-0" aria-hidden />
+                                  {isKo ? "완료" : "Done"}
+                                </span>
+                              ) : null}
+                            </div>
+                            <div
+                              className="h-1.5 overflow-hidden rounded-full bg-slate-800"
+                              role="progressbar"
+                              aria-valuenow={done ? displayTotal : displayLocked}
+                              aria-valuemin={0}
+                              aria-valuemax={displayTotal}
+                              aria-label={isKo ? "퍼즐 진행도" : "Puzzle progress"}
+                            >
+                              <div
+                                className={`h-full rounded-full transition-[width] ${
+                                  done ? "bg-emerald-500" : "bg-indigo-500/80"
+                                }`}
+                                style={{ width: `${barPct}%` }}
+                              />
+                            </div>
+                          </div>
+                        ) : null}
                         {r.lastVisitedAt ? (
                           <p className="mt-1 text-[11px] text-slate-500">
                             {isKo ? "최근 방문" : "Last visit"}: {new Date(r.lastVisitedAt).toLocaleString()}
@@ -483,7 +508,8 @@ export default function UserDashboard({
                         </button>
                       </div>
                     </li>
-                  ))}
+                    );
+                  })}
                 </ul>
               )}
             </section>
